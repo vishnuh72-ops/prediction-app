@@ -96,7 +96,28 @@ export default function Admin() {
     }
   };
 
-  // 🗑️ PURGE FUNCTION FIXED TO CLEAN DEEP DATA STRINGS
+  // 🗑️ ADMIN USER DELETION MANAGEMENT
+  const handleDeleteUser = async (userId, username) => {
+    if (username === 'admin') return alert("Cannot delete master administrator profile.");
+    
+    const confirmDelete = confirm(`🚨 Are you sure you want to completely DELETE user "${username}"? This removes their stakes history and wallet permanently.`);
+    if (!confirmDelete) return;
+
+    try {
+      // 1. Wipe their stakes dependencies first
+      await supabase.from('bets').delete().eq('user_id', userId);
+      // 2. Remove the profile row item entirely
+      const { error } = await supabase.from('users').delete().eq('id', userId);
+      
+      if (error) throw error;
+      alert(`💥 Account "${username}" has been wiped from the database.`);
+      fetchAdminData();
+    } catch (err) {
+      console.error(err);
+      alert("Error deleting user profile.");
+    }
+  };
+
   const handlePurgeAllMatches = async () => {
     const check1 = confirm("🚨 HOLD ON! This will permanently DELETE all current match cards and any placed test bets from the database. This leaves your app entirely empty for the real FIFA 2026 World Cup games. Proceed?");
     if (!check1) return;
@@ -105,11 +126,8 @@ export default function Admin() {
     if (!check2) return;
 
     try {
-      // Clear associated bets table first to preserve constraints safely using non-null matching
       await supabase.from('bets').delete().not('id', 'is', null);
-      // Nuke match templates entirely using non-null matching
       const { error } = await supabase.from('matches').delete().not('id', 'is', null);
-      
       if (error) throw error;
       alert("💥 Success! Your system is now an absolute blank slate. Ready for official tournament entry.");
       fetchAdminData();
@@ -126,6 +144,9 @@ export default function Admin() {
 
   if (!isAdmin) return <p>Checking credentials...</p>;
 
+  // Filter out the admin account from the structural view table layout
+  const absolutePlayers = users.filter(u => !u.is_admin);
+
   return (
     <div style={{ fontFamily: 'sans-serif', maxWidth: '900px', margin: '30px auto', padding: '20px', color: '#333' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '2px solid #333', paddingBottom: '10px' }}>
@@ -133,7 +154,6 @@ export default function Admin() {
         <button onClick={handleLogout} style={{ background: '#ff4d4d', color: '#fff', border: 'none', borderRadius: '4px', padding: '5px 15px', cursor: 'pointer' }}>Logout</button>
       </div>
 
-      {/* RE-ENGINEERED PRODUCTION PREPARATION UTILITY */}
       <section style={{ background: '#fef2f2', padding: '16px', borderRadius: '8px', marginTop: '20px', border: '1px solid #fee2e2', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h4 style={{ margin: '0 0 4px 0', color: '#991b1b' }}>🏆 Official FIFA World Cup 2026 Preparation Tool</h4>
@@ -163,7 +183,7 @@ export default function Admin() {
         <form onSubmit={handleManualPurseEdit} style={{ display: 'flex', gap: '15px' }}>
           <select value={selectedUser} onChange={e=>setSelectedUser(e.target.value)} style={{padding:'8px', flex: 2}}>
             <option value="">-- Select User --</option>
-            {users.map(u => (
+            {absolutePlayers.map(u => (
               <option key={u.id} value={u.id}>{u.username} (Current: ${u.purse})</option>
             ))}
           </select>
@@ -172,8 +192,39 @@ export default function Admin() {
         </form>
       </section>
 
+      {/* 📊 NEW DIRECT REGISTERED USER CONTROL CENTER PANEL */}
+      <section style={{ background: '#f9f9f9', padding: '20px', borderRadius: '8px', marginTop: '20px', border: '1px solid #ddd' }}>
+        <h3>👥 Active Group Players & Account Moderation</h3>
+        <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '10px' }}>
+          <thead>
+            <tr style={{ background: '#475569', color: '#fff', textAlign: 'left' }}>
+              <th style={{padding:'10px'}}>Username</th>
+              <th>Current Purse Balance</th>
+              <th style={{textAlign: 'center'}}>Moderation Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {absolutePlayers.length === 0 ? (
+              <tr><td colSpan="3" style={{padding:'15px', color:'#64748b', fontStyle:'italic'}}>No users registered yet.</td></tr>
+            ) : (
+              absolutePlayers.map(u => (
+                <tr key={u.id} style={{ borderBottom: '1px solid #ddd' }}>
+                  <td style={{padding: '12px 10px', fontWeight: 'bold'}}>👤 {u.username}</td>
+                  <td style={{color: '#0284c7', fontWeight: 'bold'}}>${parseFloat(u.purse).toFixed(2)}</td>
+                  <td style={{textAlign: 'center'}}>
+                    <button onClick={() => handleDeleteUser(u.id, u.username)} style={{ background: '#ef4444', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
+                      Delete User Profile
+                    </button>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </section>
+
       <section style={{ marginTop: '30px' }}>
-        <h3>3. Active Fixtures & Blind Settlement</h3>
+        <h3>4. Active Fixtures & Blind Settlement</h3>
         <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '10px' }}>
           <thead>
             <tr style={{ background: '#333', color: '#fff', textAlign: 'left' }}>
