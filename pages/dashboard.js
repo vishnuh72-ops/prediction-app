@@ -10,6 +10,10 @@ export default function Dashboard() {
   const [betAmounts, setBetAmounts] = useState({});
   const [currentTime, setCurrentTime] = useState(new Date());
 
+  // Settings states
+  const [showSettings, setShowSettings] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+
   useEffect(() => {
     const savedUser = JSON.parse(localStorage.getItem('app_user'));
     if (savedUser && !savedUser.is_admin) {
@@ -20,7 +24,7 @@ export default function Dashboard() {
     }
 
     const timer = setInterval(() => {
-      setCurrentTime(new Date());
+      currentTime: setCurrentTime(new Date());
     }, 1000);
 
     return () => clearInterval(timer);
@@ -88,6 +92,47 @@ export default function Dashboard() {
     }
   };
 
+  // 🔐 SELF-SERVICE PASSWORD CHANGE
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    if (!newPassword.trim()) return alert('Please enter a valid password.');
+    
+    const { error } = await supabase
+      .from('users')
+      .update({ password: newPassword })
+      .eq('id', user.id);
+
+    if (error) {
+      alert('Error updating password.');
+    } else {
+      alert('🔒 Password updated successfully!');
+      setNewPassword('');
+      setShowSettings(false);
+    }
+  };
+
+  // ❌ SELF-SERVICE ACCOUNT DELETION
+  const handleDeleteAccount = async () => {
+    const confirmFirst = confirm("⚠️ WARNING: This will permanently delete your account, your purse balance, and all active bids. This action cannot be reversed. Proceed?");
+    if (!confirmFirst) return;
+
+    const confirmFinal = confirm("Are you absolutely sure you want to completely erase your profile?");
+    if (!confirmFinal) return;
+
+    try {
+      // Clean up user stakes history first
+      await supabase.from('bets').delete().eq('user_id', user.id);
+      // Remove the main profile line item
+      await supabase.from('users').delete().eq('id', user.id);
+
+      alert("👋 Your account has been completely wiped. Logging out...");
+      localStorage.removeItem('app_user');
+      window.location.href = '/';
+    } catch (err) {
+      alert("Error deleting account.");
+    }
+  };
+
   const handleLogout = () => {
     localStorage.removeItem('app_user');
     window.location.href = '/';
@@ -111,17 +156,45 @@ export default function Dashboard() {
                 💰 Purse: ${parseFloat(user.purse).toFixed(2)}
               </div>
             </div>
-            <button onClick={handleLogout} style={{ backgroundColor: 'transparent', border: '1px solid #475569', color: '#94a3b8', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>Logout</button>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button onClick={() => setShowSettings(!showSettings)} style={{ backgroundColor: '#475569', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>
+                {showSettings ? 'Close Menu' : '⚙️ Settings'}
+              </button>
+              <button onClick={handleLogout} style={{ backgroundColor: 'transparent', border: '1px solid #475569', color: '#94a3b8', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>Logout</button>
+            </div>
           </div>
           <div style={{ fontSize: '12px', color: '#64748b', fontFamily: 'monospace', backgroundColor: '#0f172a', padding: '6px', borderRadius: '6px', border: '1px solid #334155', textAlign: 'center' }}>
             ⏰ Clock: {currentTime.toLocaleTimeString('en-IN')}
           </div>
         </div>
 
+        {/* SETTINGS UTILITY PANEL VIEW */}
+        {showSettings && (
+          <div style={{ backgroundColor: '#1e293b', border: '1px solid #ef4444', borderRadius: '16px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div>
+              <h3 style={{ margin: '0 0 4px 0', fontSize: '16px', color: '#f8fafc' }}>🔑 Change Password</h3>
+              <form onSubmit={handleChangePassword} style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                <input type="password" placeholder="Enter new password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} style={{ flex: 1, padding: '10px', backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: '#fff', fontSize: '14px' }} />
+                <button type="submit" style={{ backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '8px', padding: '0 16px', fontWeight: '600', cursor: 'pointer', fontSize: '14px' }}>Save</button>
+              </form>
+            </div>
+            
+            <hr style={{ border: 'none', borderTop: '1px solid #334155', margin: '4px 0' }} />
+
+            <div>
+              <h3 style={{ margin: '0 0 4px 0', fontSize: '16px', color: '#f87171' }}>🚨 Danger Zone</h3>
+              <p style={{ margin: '0 0 10px 0', fontSize: '12px', color: '#94a3b8' }}>Completely wipe your credentials from our match platform forever.</p>
+              <button onClick={handleDeleteAccount} style={{ backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 16px', fontWeight: '700', cursor: 'pointer', fontSize: '13px', width: '100%' }}>
+                Delete My Account Permanently
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* RESPONSIVE LAYOUT FLUID COUPLING */}
         <div style={{ display: 'flex', flexDirection: 'column-reverse', gap: '20px' }}>
           
-          {/* STANDINGS MOVED DYNAMICALLY SO IT FITS MINI SCREENS */}
+          {/* STANDINGS */}
           <div style={{ width: '100%' }}>
             <h3 style={{ fontSize: '16px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#38bdf8', marginBottom: '12px' }}>📊 Group Standings</h3>
             <div style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '12px' }}>
@@ -172,7 +245,6 @@ export default function Dashboard() {
                       </span>
                     </div>
 
-                    {/* BIG TEAM TEXT CRUNCH FIX FOR MOBILE SCREENS */}
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', margin: '14px 0' }}>
                       <div style={{ fontSize: '18px', fontWeight: '800', textAlign: 'center' }}>{m.team_a}</div>
                       <div style={{ backgroundColor: '#0f172a', color: '#64748b', fontSize: '11px', fontWeight: '700', width: '26px', height: '26px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #334155' }}>VS</div>
@@ -192,7 +264,6 @@ export default function Dashboard() {
                           </div>
                         )}
 
-                        {/* MOBILE COLUMN STACKING RADIO BOXES */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
                           <label style={{ textAlign: 'center', backgroundColor: selectedOutcome === 'A' ? '#0284c7' : '#1e293b', border: '1px solid #334155', borderRadius: '8px', padding: '10px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: '600', fontSize: '13px' }}>
                             <input type="radio" name={`outcome-${m.id}`} checked={selectedOutcome === 'A'} onChange={() => setPredictions({ ...predictions, [m.id]: 'A' })} style={{ display: 'none' }} />
@@ -241,7 +312,7 @@ export default function Dashboard() {
                       </div>
                     )}
 
-                    {/* COMPACT REVEAL GRID FOR MOBILE SCREEN WIDTHS */}
+                    {/* COMPACT REVEAL GRID */}
                     {isClosed && (
                       <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px dashed #334155' }}>
                         <div style={{ fontSize: '12px', fontWeight: '700', color: '#94a3b8', marginBottom: '6px' }}>👁️ Group Submissions:</div>
