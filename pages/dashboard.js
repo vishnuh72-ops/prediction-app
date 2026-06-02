@@ -42,7 +42,7 @@ export default function Dashboard() {
     const { data: bData } = await supabase.from('bets').select('*');
     setAllBets(bData || []);
 
-    const { data: scoreData } = await supabase.from('users').select('id', 'username', 'purse').eq('is_admin', false).order('purse', { ascending: false });
+    const { data: scoreData } = await supabase.from('users').select('id', 'username', 'name', 'purse').eq('is_admin', false).order('purse', { ascending: false });
     setUsersList(scoreData || []);
   };
 
