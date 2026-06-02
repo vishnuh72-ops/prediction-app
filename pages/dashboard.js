@@ -54,7 +54,7 @@ export default function Dashboard() {
 
     if (error) {
       await supabase.from('users').update({ purse: parseFloat(user.purse) }).eq('id', user.id);
-      alert('Bet adjustment error.');
+      alert('Bet error.');
     } else {
       alert('🎯 Bet locked in!');
       fetchDashboardData(user.id);
@@ -72,7 +72,6 @@ export default function Dashboard() {
     <div style={{ backgroundColor: '#0f172a', minHeight: '100vh', fontFamily: 'system-ui, sans-serif', color: '#f8fafc', padding: '24px' }}>
       <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'grid', gridTemplateColumns: '1fr', gap: '24px' }}>
         
-        {/* TOP COMPACT BRAND NAVIGATION BAR */}
         <div style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '20px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '700' }}>👋 Welcome, {user.username}</h2>
@@ -83,10 +82,8 @@ export default function Dashboard() {
           <button onClick={handleLogout} style={{ backgroundColor: 'transparent', border: '1px solid #475569', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600' }}>Logout</button>
         </div>
 
-        {/* TWO COLUMN GRID LAYOUT */}
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr)', gap: '24px', alignItems: 'start' }}>
           
-          {/* MAIN COLUMN: MATCH CARDS */}
           <div>
             <h3 style={{ fontSize: '18px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#38bdf8', marginBottom: '16px' }}>⚡ Live Match Cards</h3>
             
@@ -97,9 +94,8 @@ export default function Dashboard() {
               const matchBets = allBets.filter(b => b.match_id === m.id);
 
               return (
-                <div key={m.id} style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '24px', marginBottom: '20px', position: 'relative' }}>
+                <div key={m.id} style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '24px', marginBottom: '20px' }}>
                   
-                  {/* CARD SUB HEADER HEADER */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', paddingBottom: '12px', borderBottom: '1px solid #334155' }}>
                     <span style={{ fontSize: '12px', fontWeight: '700', color: '#94a3b8', letterSpacing: '0.05em' }}>MATCH NO. {m.match_no}</span>
                     <span style={{ fontSize: '11px', fontWeight: '800', padding: '4px 10px', borderRadius: '6px', color: '#fff', backgroundColor: m.winner ? '#15803d' : isClosed ? '#b91c1c' : '#0284c7' }}>
@@ -107,7 +103,6 @@ export default function Dashboard() {
                     </span>
                   </div>
 
-                  {/* TEAMS VERSUS HUB */}
                   <div style={{ display: 'flex', justifyContent: 'space-around', alignItems: 'center', margin: '20px 0' }}>
                     <div style={{ textAlign: 'center', flex: 1 }}><span style={{ fontSize: '20px', fontWeight: '800' }}>{m.team_a}</span></div>
                     <div style={{ backgroundColor: '#0f172a', color: '#64748b', fontSize: '12px', fontWeight: '700', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #334155' }}>VS</div>
@@ -115,19 +110,32 @@ export default function Dashboard() {
                   </div>
 
                   <div style={{ fontSize: '13px', color: '#94a3b8', textAlign: 'center', marginBottom: '20px', backgroundColor: '#0f172a', padding: '8px', borderRadius: '8px' }}>
-                    📅 Kickoff: {matchKickoff.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} (IST) | 📊 Return Margin: <strong style={{color:'#fff'}}>{m.margin_rate}x</strong>
+                    📅 Kickoff: {matchKickoff.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} (IST)
                   </div>
 
-                  {/* BET CONTROLLER SWITCH INTERFACE */}
                   {!myBet && !isClosed && (
                     <div style={{ backgroundColor: '#0f172a', padding: '16px', borderRadius: '12px', border: '1px solid #334155' }}>
                       <div style={{ display: 'flex', justifyContent: 'center', gap: '15px', marginBottom: '16px' }}>
-                        {['A', 'DRAW', 'B'].map((type) => (
-                          <label key={type} style={{ flex: 1, textDisplay: 'center', backgroundColor: predictions[m.id] === type ? '#0284c7' : '#1e293b', border: '1px solid #334155', borderRadius: '8px', padding: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', fontWeight: '600', fontSize: '14px' }}>
-                            <input type="radio" name={`outcome-${m.id}`} onClick={() => setPredictions({ ...predictions, [m.id]: type })} style={{ display: 'none' }} />
-                            {type === 'DRAW' ? '🤝 Draw' : type === 'A' ? m.team_a : m.team_b}
-                          </label>
-                        ))}
+                        
+                        {/* ADJUSTED BUTTON LABELS TO SHOW ASSIGNED MULTIPLIER ODDS */}
+                        <label style={{ flex: 1, textDisplay: 'center', backgroundColor: predictions[m.id] === 'A' ? '#0284c7' : '#1e293b', border: '1px solid #334155', borderRadius: '8px', padding: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', fontWeight: '600', fontSize: '14px' }}>
+                          <input type="radio" name={`outcome-${m.id}`} onClick={() => setPredictions({ ...predictions, [m.id]: 'A' })} style={{ display: 'none' }} />
+                          <span>🚩 {m.team_a}</span>
+                          <span style={{fontSize:'12px', color:'#38bdf8', marginTop:'4px'}}>{m.margin_a}x</span>
+                        </label>
+
+                        <label style={{ flex: 1, textDisplay: 'center', backgroundColor: predictions[m.id] === 'DRAW' ? '#0284c7' : '#1e293b', border: '1px solid #334155', borderRadius: '8px', padding: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', fontWeight: '600', fontSize: '14px' }}>
+                          <input type="radio" name={`outcome-${m.id}`} onClick={() => setPredictions({ ...predictions, [m.id]: 'DRAW' })} style={{ display: 'none' }} />
+                          <span>🤝 Draw</span>
+                          <span style={{fontSize:'12px', color:'#38bdf8', marginTop:'4px'}}>{m.margin_draw}x</span>
+                        </label>
+
+                        <label style={{ flex: 1, textDisplay: 'center', backgroundColor: predictions[m.id] === 'B' ? '#0284c7' : '#1e293b', border: '1px solid #334155', borderRadius: '8px', padding: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', fontWeight: '600', fontSize: '14px' }}>
+                          <input type="radio" name={`outcome-${m.id}`} onClick={() => setPredictions({ ...predictions, [m.id]: 'B' })} style={{ display: 'none' }} />
+                          <span>🏁 {m.team_b}</span>
+                          <span style={{fontSize:'12px', color:'#38bdf8', marginTop:'4px'}}>{m.margin_b}x</span>
+                        </label>
+
                       </div>
                       <div style={{ display: 'flex', gap: '12px' }}>
                         <input type="number" min="1" placeholder="Enter Stake ($)" onChange={(e) => setBetAmounts({ ...betAmounts, [m.id]: e.target.value })} style={{ flex: '2', padding: '12px', backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px', color: '#fff', outline: 'none' }} />
@@ -142,7 +150,6 @@ export default function Dashboard() {
                     </div>
                   )}
 
-                  {/* REVEAL PREDICTIONS BOX */}
                   {isClosed && (
                     <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px dashed #334155' }}>
                       <div style={{ fontSize: '13px', fontWeight: '700', color: '#94a3b8', marginBottom: '8px' }}>👁️ Group Submissions:</div>
@@ -164,7 +171,6 @@ export default function Dashboard() {
             })}
           </div>
 
-          {/* RIGHT SIDEBAR COLUMN: LEADERBOARD */}
           <div>
             <h3 style={{ fontSize: '18px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#38bdf8', marginBottom: '16px' }}>📊 Group Standings</h3>
             <div style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '20px' }}>
