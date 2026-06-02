@@ -206,11 +206,11 @@ export default function Dashboard() {
               <p style={{ margin: '0 0 10px 0', fontSize: '12px', color: '#94a3b8' }}>Send virtual tokens from your wallet directly to another player.</p>
               <form onSubmit={handleVirtualTransfer} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 <select value={transferTarget} onChange={(e) => setTransferTarget(e.target.value)} style={{ padding: '10px', backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: '#fff', fontSize: '14px', width: '100%' }}>
-                  <option value="">-- Select Recipient --</option>
-                  {transferPartners.map(u => (
-                    <option key={u.id} value={u.id}>👤 {u.username}</option>
-                  ))}
-                </select>
+  <option value="">-- Select Recipient --</option>
+  {transferPartners.map(u => (
+    <option key={u.id} value={u.id}>👤 {u.username || u.name || 'Player'}</option>
+  ))}
+</select>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <input type="number" step="0.01" min="0.01" placeholder="Amount to send ($)" value={transferAmount} onChange={(e) => setTransferAmount(e.target.value)} style={{ flex: 1, padding: '10px', backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: '#fff', fontSize: '14px' }} />
                   <button type="submit" style={{ backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '8px', padding: '0 20px', fontWeight: '700', cursor: 'pointer', fontSize: '14px' }}>Send</button>
