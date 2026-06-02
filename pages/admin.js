@@ -97,9 +97,10 @@ export default function Admin() {
   };
 
   // 🗑️ NEW TOURNAMENT PREPARATION ACTION: PERMANENTLY WIPE EVERYTHING
-  const handlePurgeAllMatches = async () => {
-    const check1 = confirm("🚨 HOLD ON! This will permanently DELETE all current match cards and any placed test bets from the database. This leaves your app entirely empty for the real FIFA 2026 World Cup games. Proceed?");
-    if (!check1) return;
+ // Clear associated bets table first to preserve constraints
+await supabase.from('bets').delete().not('id', 'is', null);
+// Nuke match templates entirely
+const { error } = await supabase.from('matches').delete().not('id', 'is', null);
 
     const check2 = confirm("Confirming again: Delete every single fixture item forever?");
     if (!check2) return;
