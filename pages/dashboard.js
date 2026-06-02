@@ -42,7 +42,12 @@ export default function Dashboard() {
     const { data: bData } = await supabase.from('bets').select('*');
     setAllBets(bData || []);
 
-    const { data: scoreData } = await supabase.from('users').select('id', 'username', 'name', 'purse').eq('is_admin', false).order('purse', { ascending: false });
+    // Fetching all possible variations of the name column to avoid empty fields
+    const { data: scoreData } = await supabase
+      .from('users')
+      .select('id', 'username', 'name', 'display_name', 'purse')
+      .eq('is_admin', false)
+      .order('purse', { ascending: false });
     setUsersList(scoreData || []);
   };
 
@@ -94,7 +99,7 @@ export default function Dashboard() {
     }
   };
 
-  // 💸 VIRTUAL USER TO USER TRANSFER LOGIC
+  // 💸 VIRTUAL PEER-TO-PEER TRANSFER LOGIC
   const handleVirtualTransfer = async (e) => {
     e.preventDefault();
     const amount = parseFloat(transferAmount);
@@ -104,7 +109,8 @@ export default function Dashboard() {
     if (amount > parseFloat(user.purse)) return alert('Insufficient purse balance for this transfer!');
     if (transferTarget === user.id) return alert('You cannot send points to yourself.');
 
-    if (!confirm(`Are you sure you want to transfer $${amount.toFixed(2)} to this user?`)) return;
+    const recipientName = usersList.find(u => u.id === transferTarget)?.username || 'your friend';
+    if (!confirm(`Are you sure you want to transfer $${amount.toFixed(2)} to ${recipientName}?`)) return;
 
     try {
       // 1. Fetch recipient's current balance
@@ -119,7 +125,7 @@ export default function Dashboard() {
       const recipientNewPurse = parseFloat(recipient.purse) + amount;
       await supabase.from('users').update({ purse: recipientNewPurse }).eq('id', transferTarget);
 
-      alert(`✅ Successfully transferred $${amount.toFixed(2)} to ${recipient.username}!`);
+      alert(`✅ Successfully transferred $${amount.toFixed(2)} to ${recipient.username || 'recipient'}!`);
       setTransferAmount('');
       setTransferTarget('');
       fetchDashboardData(user.id);
@@ -168,18 +174,18 @@ export default function Dashboard() {
   const activeMatches = matches.filter(m => !m.winner);
   const settledMatches = matches.filter(m => m.winner);
   
-  // Filter out the logged-in user so they can't send money to themselves
+  // Exclude current logged-in user from the peer transfer selection box
   const transferPartners = usersList.filter(u => u.id !== user.id);
 
   return (
     <div style={{ backgroundColor: '#0f172a', minHeight: '100vh', fontFamily: 'system-ui, sans-serif', color: '#f8fafc', padding: '12px' }}>
       <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
         
-        {/* HEADER */}
+        {/* HEADER BLOCK */}
         <div style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', flexWrap: 'wrap', gap: '10px' }}>
             <div>
-              <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700' }}>👋 Welcome, {user.username}</h2>
+              <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700' }}>👋 Welcome, {user.username || user.name || 'User'}</h2>
               <div style={{ display: 'inline-block', backgroundColor: '#0284c7', color: '#fff', padding: '4px 10px', borderRadius: '20px', fontSize: '13px', fontWeight: '700', marginTop: '4px' }}>
                 💰 Purse: ${parseFloat(user.purse).toFixed(2)}
               </div>
@@ -196,21 +202,23 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* SETTINGS MENU (PASSWORD, ACCOUNT DELETION, AND VIRTUAL TRANSFER) */}
+        {/* UTILITY CONTROL PANELS (SETTINGS & TRANSFERS) */}
         {showSettings && (
           <div style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
             
-            {/* NEW VIRTUAL TRANSFER FORM */}
+            {/* VIRTUAL TRANSACTIONS SYSTEM */}
             <div>
               <h3 style={{ margin: '0 0 4px 0', fontSize: '16px', color: '#38bdf8' }}>💸 Transfer Points to Friend</h3>
               <p style={{ margin: '0 0 10px 0', fontSize: '12px', color: '#94a3b8' }}>Send virtual tokens from your wallet directly to another player.</p>
               <form onSubmit={handleVirtualTransfer} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 <select value={transferTarget} onChange={(e) => setTransferTarget(e.target.value)} style={{ padding: '10px', backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: '#fff', fontSize: '14px', width: '100%' }}>
-  <option value="">-- Select Recipient --</option>
-  {transferPartners.map(u => (
-    <option key={u.id} value={u.id}>👤 {u.username || u.name || 'Player'}</option>
-  ))}
-</select>
+                  <option value="">-- Select Recipient --</option>
+                  {transferPartners.map(u => (
+                    <option key={u.id} value={u.id}>
+                      👤 {u.username || u.name || u.display_name || JSON.stringify(u)}
+                    </option>
+                  ))}
+                </select>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <input type="number" step="0.01" min="0.01" placeholder="Amount to send ($)" value={transferAmount} onChange={(e) => setTransferAmount(e.target.value)} style={{ flex: 1, padding: '10px', backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: '#fff', fontSize: '14px' }} />
                   <button type="submit" style={{ backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '8px', padding: '0 20px', fontWeight: '700', cursor: 'pointer', fontSize: '14px' }}>Send</button>
@@ -220,7 +228,7 @@ export default function Dashboard() {
 
             <hr style={{ border: 'none', borderTop: '1px solid #334155', margin: '0' }} />
 
-            {/* PASSWORD UPDATE */}
+            {/* SECURITY CREDENTIAL FORM */}
             <div>
               <h3 style={{ margin: '0 0 4px 0', fontSize: '16px', color: '#f8fafc' }}>🔑 Change Password</h3>
               <form onSubmit={handleChangePassword} style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
@@ -231,7 +239,7 @@ export default function Dashboard() {
             
             <hr style={{ border: 'none', borderTop: '1px solid #334155', margin: '0' }} />
 
-            {/* DANGER ZONE */}
+            {/* DANGER DELETION PANEL */}
             <div>
               <h3 style={{ margin: '0 0 4px 0', fontSize: '16px', color: '#f87171' }}>🚨 Danger Zone</h3>
               <button onClick={handleDeleteAccount} style={{ backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 16px', fontWeight: '700', cursor: 'pointer', fontSize: '13px', width: '100%' }}>
@@ -241,18 +249,18 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* RESPONSIVE LAYOUT FLUID COUPLING */}
+        {/* RESPONSIVE LAYOUT COLUMNS */}
         <div style={{ display: 'flex', flexDirection: 'column-reverse', gap: '20px' }}>
           
-          {/* STANDINGS */}
+          {/* GROUP STANDINGS LIST */}
           <div style={{ width: '100%' }}>
             <h3 style={{ fontSize: '16px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#38bdf8', marginBottom: '12px' }}>📊 Group Standings</h3>
             <div style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '12px' }}>
               {usersList.map((u, index) => (
-                <div key={index} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 6px', borderBottom: index === usersList.length - 1 ? 'none' : '1px solid #334155', fontWeight: user.username === u.username ? '700' : '400', backgroundColor: user.username === u.username ? 'rgba(56,189,248,0.05)' : 'transparent', borderRadius: '6px' }}>
+                <div key={index} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 6px', borderBottom: index === usersList.length - 1 ? 'none' : '1px solid #334155', fontWeight: user.id === u.id ? '700' : '400', backgroundColor: user.id === u.id ? 'rgba(56,189,248,0.05)' : 'transparent', borderRadius: '6px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px' }}>
                     <span style={{ color: index === 0 ? '#fbbf24' : index === 1 ? '#94a3b8' : index === 2 ? '#b45309' : '#64748b', fontWeight: '800' }}>#{index + 1}</span>
-                    <span>{u.username}</span>
+                    <span>{u.username || u.name || 'Player'}</span>
                   </div>
                   <span style={{ color: '#38bdf8', fontWeight: '700', fontSize: '14px' }}>${parseFloat(u.purse).toFixed(2)}</span>
                 </div>
@@ -260,7 +268,7 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* MAIN FIXTURES */}
+          {/* ACTIVE GAME CARDS BLOCK */}
           <div style={{ width: '100%' }}>
             <h3 style={{ fontSize: '16px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#38bdf8', marginBottom: '12px' }}>⚡ Live Match Cards</h3>
             
@@ -362,16 +370,17 @@ export default function Dashboard() {
                       </div>
                     )}
 
-                    {/* COMPACT REVEAL GRID */}
+                    {/* REVEAL GRID */}
                     {isClosed && (
                       <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px dashed #334155' }}>
                         <div style={{ fontSize: '12px', fontWeight: '700', color: '#94a3b8', marginBottom: '6px' }}>👁️ Group Submissions:</div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                           {matchBets.map(b => {
-                            const lookup = usersList.find(ul => ul.id === b.user_id)?.username || 'Player';
+                            const lookup = usersList.find(ul => ul.id === b.user_id);
+                            const finalLabel = lookup ? (lookup.username || lookup.name || 'Player') : 'Player';
                             return (
                               <div key={b.id} style={{ backgroundColor: '#0f172a', border: '1px solid #334155', padding: '6px 10px', borderRadius: '8px', fontSize: '12px', display: 'flex', justifyContent: 'space-between' }}>
-                                <span>👤 <strong>{lookup}</strong></span>
+                                <span>👤 <strong>{finalLabel}</strong></span>
                                 <span style={{color: '#38bdf8'}}>${b.amount} ({b.predicted_outcome})</span>
                               </div>
                             );
@@ -385,7 +394,7 @@ export default function Dashboard() {
               })
             )}
 
-            {/* HISTORIC LOG LIST */}
+            {/* MATCH HISTORY LOG */}
             <h3 style={{ fontSize: '16px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#94a3b8', marginTop: '30px', marginBottom: '12px' }}>📜 Match History</h3>
             {settledMatches.length === 0 ? (
               <p style={{ color: '#64748b', fontSize: '13px' }}>No matches settled yet.</p>
