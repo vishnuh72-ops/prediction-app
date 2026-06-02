@@ -68,10 +68,15 @@ export default function Dashboard() {
 
   if (!user) return <div style={{ color: '#fff', backgroundColor: '#0f172a', minHeight: '100vh', padding: '20px' }}>Loading...</div>;
 
+  // Split matches into active vs completed history
+  const activeMatches = matches.filter(m => !m.winner);
+  const settledMatches = matches.filter(m => m.winner);
+
   return (
     <div style={{ backgroundColor: '#0f172a', minHeight: '100vh', fontFamily: 'system-ui, sans-serif', color: '#f8fafc', padding: '24px' }}>
       <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'grid', gridTemplateColumns: '1fr', gap: '24px' }}>
         
+        {/* TOP BRAND NAV BAR */}
         <div style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '20px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '700' }}>👋 Welcome, {user.username}</h2>
@@ -82,95 +87,161 @@ export default function Dashboard() {
           <button onClick={handleLogout} style={{ backgroundColor: 'transparent', border: '1px solid #475569', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600' }}>Logout</button>
         </div>
 
+        {/* TWO COLUMN GRID LAYOUT */}
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr)', gap: '24px', alignItems: 'start' }}>
           
+          {/* MAIN COLUMN */}
           <div>
             <h3 style={{ fontSize: '18px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#38bdf8', marginBottom: '16px' }}>⚡ Live Match Cards</h3>
             
-            {matches.map(m => {
-              const matchKickoff = new Date(m.kickoff_time);
-              const isClosed = currentTime >= matchKickoff;
-              const myBet = allBets.find(b => b.match_id === m.id && b.user_id === user.id);
-              const matchBets = allBets.filter(b => b.match_id === m.id);
+            {activeMatches.length === 0 ? (
+              <p style={{ color: '#64748b', fontSize: '14px', backgroundColor: '#1e293b', padding: '20px', borderRadius: '12px', border: '1px dashed #334155' }}>No active fixtures right now. Check back soon!</p>
+            ) : (
+              activeMatches.map(m => {
+                const matchKickoff = new Date(m.kickoff_time);
+                const isClosed = currentTime >= matchKickoff;
+                const myBet = allBets.find(b => b.match_id === m.id && b.user_id === user.id);
+                const matchBets = allBets.filter(b => b.match_id === m.id);
+                
+                // Dynamic calculations for live helper box
+                const selectedOutcome = predictions[m.id];
+                const enteredStake = parseFloat(betAmounts[m.id]) || 0;
+                let activeMultiplier = 0;
+                if (selectedOutcome === 'A') activeMultiplier = m.margin_a;
+                if (selectedOutcome === 'B') activeMultiplier = m.margin_b;
+                if (selectedOutcome === 'DRAW') activeMultiplier = m.margin_draw;
 
-              return (
-                <div key={m.id} style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '24px', marginBottom: '20px' }}>
-                  
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', paddingBottom: '12px', borderBottom: '1px solid #334155' }}>
-                    <span style={{ fontSize: '12px', fontWeight: '700', color: '#94a3b8', letterSpacing: '0.05em' }}>MATCH NO. {m.match_no}</span>
-                    <span style={{ fontSize: '11px', fontWeight: '800', padding: '4px 10px', borderRadius: '6px', color: '#fff', backgroundColor: m.winner ? '#15803d' : isClosed ? '#b91c1c' : '#0284c7' }}>
-                      {m.winner ? '🏆 SETTLED' : isClosed ? '🔒 LOCKED' : '⏳ ACTIVE'}
-                    </span>
-                  </div>
+                const potentialReturn = enteredStake * activeMultiplier;
+                const potentialProfit = potentialReturn - enteredStake;
 
-                  <div style={{ display: 'flex', justifyContent: 'space-around', alignItems: 'center', margin: '20px 0' }}>
-                    <div style={{ textAlign: 'center', flex: 1 }}><span style={{ fontSize: '20px', fontWeight: '800' }}>{m.team_a}</span></div>
-                    <div style={{ backgroundColor: '#0f172a', color: '#64748b', fontSize: '12px', fontWeight: '700', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #334155' }}>VS</div>
-                    <div style={{ textAlign: 'center', flex: 1 }}><span style={{ fontSize: '20px', fontWeight: '800' }}>{m.team_b}</span></div>
-                  </div>
-
-                  <div style={{ fontSize: '13px', color: '#94a3b8', textAlign: 'center', marginBottom: '20px', backgroundColor: '#0f172a', padding: '8px', borderRadius: '8px' }}>
-                    📅 Kickoff: {matchKickoff.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} (IST)
-                  </div>
-
-                  {!myBet && !isClosed && (
-                    <div style={{ backgroundColor: '#0f172a', padding: '16px', borderRadius: '12px', border: '1px solid #334155' }}>
-                      <div style={{ display: 'flex', justifyContent: 'center', gap: '15px', marginBottom: '16px' }}>
-                        
-                        {/* ADJUSTED BUTTON LABELS TO SHOW ASSIGNED MULTIPLIER ODDS */}
-                        <label style={{ flex: 1, textDisplay: 'center', backgroundColor: predictions[m.id] === 'A' ? '#0284c7' : '#1e293b', border: '1px solid #334155', borderRadius: '8px', padding: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', fontWeight: '600', fontSize: '14px' }}>
-                          <input type="radio" name={`outcome-${m.id}`} onClick={() => setPredictions({ ...predictions, [m.id]: 'A' })} style={{ display: 'none' }} />
-                          <span>🚩 {m.team_a}</span>
-                          <span style={{fontSize:'12px', color:'#38bdf8', marginTop:'4px'}}>{m.margin_a}x</span>
-                        </label>
-
-                        <label style={{ flex: 1, textDisplay: 'center', backgroundColor: predictions[m.id] === 'DRAW' ? '#0284c7' : '#1e293b', border: '1px solid #334155', borderRadius: '8px', padding: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', fontWeight: '600', fontSize: '14px' }}>
-                          <input type="radio" name={`outcome-${m.id}`} onClick={() => setPredictions({ ...predictions, [m.id]: 'DRAW' })} style={{ display: 'none' }} />
-                          <span>🤝 Draw</span>
-                          <span style={{fontSize:'12px', color:'#38bdf8', marginTop:'4px'}}>{m.margin_draw}x</span>
-                        </label>
-
-                        <label style={{ flex: 1, textDisplay: 'center', backgroundColor: predictions[m.id] === 'B' ? '#0284c7' : '#1e293b', border: '1px solid #334155', borderRadius: '8px', padding: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', fontWeight: '600', fontSize: '14px' }}>
-                          <input type="radio" name={`outcome-${m.id}`} onClick={() => setPredictions({ ...predictions, [m.id]: 'B' })} style={{ display: 'none' }} />
-                          <span>🏁 {m.team_b}</span>
-                          <span style={{fontSize:'12px', color:'#38bdf8', marginTop:'4px'}}>{m.margin_b}x</span>
-                        </label>
-
-                      </div>
-                      <div style={{ display: 'flex', gap: '12px' }}>
-                        <input type="number" min="1" placeholder="Enter Stake ($)" onChange={(e) => setBetAmounts({ ...betAmounts, [m.id]: e.target.value })} style={{ flex: '2', padding: '12px', backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px', color: '#fff', outline: 'none' }} />
-                        <button onClick={() => handlePlaceBet(m.id, m.kickoff_time)} style={{ flex: '1', backgroundColor: '#38bdf8', color: '#0f172a', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>Lock Bet</button>
-                      </div>
+                return (
+                  <div key={m.id} style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '24px', marginBottom: '20px' }}>
+                    
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', paddingBottom: '12px', borderBottom: '1px solid #334155' }}>
+                      <span style={{ fontSize: '12px', fontWeight: '700', color: '#94a3b8', letterSpacing: '0.05em' }}>MATCH NO. {m.match_no}</span>
+                      <span style={{ fontSize: '11px', fontWeight: '800', padding: '4px 10px', borderRadius: '6px', color: '#fff', backgroundColor: isClosed ? '#b91c1c' : '#0284c7' }}>
+                        {isClosed ? '🔒 LOCKED' : '⏳ ACTIVE'}
+                      </span>
                     </div>
-                  )}
 
-                  {myBet && (
-                    <div style={{ backgroundColor: 'rgba(2,132,199,0.15)', border: '1px solid rgba(2,132,199,0.3)', padding: '14px', borderRadius: '12px', textAlign: 'center', color: '#38bdf8', fontWeight: '600', fontSize: '14px' }}>
-                      🎯 Lock-in saved: <strong>${myBet.amount}</strong> on {myBet.predicted_outcome === 'DRAW' ? 'Draw' : myBet.predicted_outcome === 'A' ? m.team_a : m.team_b}
+                    <div style={{ display: 'flex', justifyContent: 'space-around', alignItems: 'center', margin: '20px 0' }}>
+                      <div style={{ textAlign: 'center', flex: 1 }}><span style={{ fontSize: '20px', fontWeight: '800' }}>{m.team_a}</span></div>
+                      <div style={{ backgroundColor: '#0f172a', color: '#64748b', fontSize: '12px', fontWeight: '700', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #334155' }}>VS</div>
+                      <div style={{ textAlign: 'center', flex: 1 }}><span style={{ fontSize: '20px', fontWeight: '800' }}>{m.team_b}</span></div>
                     </div>
-                  )}
 
-                  {isClosed && (
-                    <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px dashed #334155' }}>
-                      <div style={{ fontSize: '13px', fontWeight: '700', color: '#94a3b8', marginBottom: '8px' }}>👁️ Group Submissions:</div>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '8px' }}>
-                        {matchBets.map(b => {
-                          const lookup = usersList.find(ul => ul.id === b.user_id)?.username || 'Player';
-                          return (
-                            <div key={b.id} style={{ backgroundColor: '#0f172a', border: '1px solid #334155', padding: '8px', borderRadius: '8px', fontSize: '12px' }}>
-                              👤 <strong style={{color:'#fff'}}>{lookup}</strong>: ${b.amount} ({b.predicted_outcome})
+                    <div style={{ fontSize: '13px', color: '#94a3b8', textAlign: 'center', marginBottom: '20px', backgroundColor: '#0f172a', padding: '8px', borderRadius: '8px' }}>
+                      📅 Kickoff: {matchKickoff.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} (IST)
+                    </div>
+
+                    {!myBet && !isClosed && (
+                      <div style={{ backgroundColor: '#0f172a', padding: '16px', borderRadius: '12px', border: '1px solid #334155' }}>
+                        <div style={{ display: 'flex', justifyContent: 'center', gap: '15px', marginBottom: '16px' }}>
+                          <label style={{ flex: 1, textAlign: 'center', backgroundColor: predictions[m.id] === 'A' ? '#0284c7' : '#1e293b', border: '1px solid #334155', borderRadius: '8px', padding: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', fontWeight: '600', fontSize: '14px' }}>
+                            <input type="radio" name={`outcome-${m.id}`} onClick={() => setPredictions({ ...predictions, [m.id]: 'A' })} style={{ display: 'none' }} />
+                            <span>🚩 {m.team_a}</span>
+                            <span style={{fontSize:'12px', color:'#38bdf8', marginTop:'4px'}}>{m.margin_a}x</span>
+                          </label>
+
+                          <label style={{ flex: 1, textAlign: 'center', backgroundColor: predictions[m.id] === 'DRAW' ? '#0284c7' : '#1e293b', border: '1px solid #334155', borderRadius: '8px', padding: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', fontWeight: '600', fontSize: '14px' }}>
+                            <input type="radio" name={`outcome-${m.id}`} onClick={() => setPredictions({ ...predictions, [m.id]: 'DRAW' })} style={{ display: 'none' }} />
+                            <span>🤝 Draw</span>
+                            <span style={{fontSize:'12px', color:'#38bdf8', marginTop:'4px'}}>{m.margin_draw}x</span>
+                          </label>
+
+                          <label style={{ flex: 1, textAlign: 'center', backgroundColor: predictions[m.id] === 'B' ? '#0284c7' : '#1e293b', border: '1px solid #334155', borderRadius: '8px', padding: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', fontWeight: '600', fontSize: '14px' }}>
+                            <input type="radio" name={`outcome-${m.id}`} onClick={() => setPredictions({ ...predictions, [m.id]: 'B' })} style={{ display: 'none' }} />
+                            <span>🏁 {m.team_b}</span>
+                            <span style={{fontSize:'12px', color:'#38bdf8', marginTop:'4px'}}>{m.margin_b}x</span>
+                          </label>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                          <input type="number" min="1" placeholder="Enter Bid Amount ($)" value={betAmounts[m.id] || ''} onChange={(e) => setBetAmounts({ ...betAmounts, [m.id]: e.target.value })} style={{ padding: '12px', backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px', color: '#fff', outline: 'none', fontSize: '15px' }} />
+                          
+                          {/* DYNAMIC CALCULATION LIVE HELPER BOX (Inspired by image_48b907.png) */}
+                          {selectedOutcome && enteredStake > 0 && (
+                            <div style={{ backgroundColor: 'rgba(56, 189, 248, 0.08)', border: '1px solid rgba(56, 189, 248, 0.2)', padding: '14px', borderRadius: '8px', fontSize: '13px', color: '#e2e8f0', lineHeight: '1.6' }}>
+                              📈 <em>If correct:</em> You will get <strong>${potentialReturn.toFixed(2)}</strong> coins including a net profit of <strong style={{ color: '#4ade80' }}>${potentialProfit.toFixed(2)}</strong>.<br/>
+                              📉 <em>If wrong:</em> Lose <strong>${enteredStake.toFixed(2)}</strong> coins only.
                             </div>
-                          );
-                        })}
+                          )}
+
+                          <button onClick={() => handlePlaceBet(m.id, m.kickoff_time)} style={{ padding: '14px', backgroundColor: '#38bdf8', color: '#0f172a', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '15px' }}>Place Bid</button>
+                        </div>
+                      </div>
+                    )}
+
+                    {myBet && (
+                      <div style={{ backgroundColor: 'rgba(2,132,199,0.15)', border: '1px solid rgba(2,132,199,0.3)', padding: '14px', borderRadius: '12px', textAlign: 'center', color: '#38bdf8', fontWeight: '600', fontSize: '14px' }}>
+                        🎯 Lock-in saved: <strong>${myBet.amount}</strong> on {myBet.predicted_outcome === 'DRAW' ? 'Draw' : myBet.predicted_outcome === 'A' ? m.team_a : m.team_b}
+                      </div>
+                    )}
+
+                    {isClosed && (
+                      <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px dashed #334155' }}>
+                        <div style={{ fontSize: '13px', fontWeight: '700', color: '#94a3b8', marginBottom: '8px' }}>👁️ Group Submissions:</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '8px' }}>
+                          {matchBets.map(b => {
+                            const lookup = usersList.find(ul => ul.id === b.user_id)?.username || 'Player';
+                            return (
+                              <div key={b.id} style={{ backgroundColor: '#0f172a', border: '1px solid #334155', padding: '8px', borderRadius: '8px', fontSize: '12px' }}>
+                                👤 <strong style={{color:'#fff'}}>{lookup}</strong>: ${b.amount} ({b.predicted_outcome})
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                  </div>
+                );
+              })
+            )}
+
+            {/* NEW SECTION: HISTORICAL RESULTS AND RETURNS TRACKER */}
+            <h3 style={{ fontSize: '18px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#94a3b8', marginTop: '40px', marginBottom: '16px' }}>📜 Match History & Past Returns</h3>
+            {settledMatches.length === 0 ? (
+              <p style={{ color: '#64748b', fontSize: '14px' }}>No matches have been settled yet.</p>
+            ) : (
+              settledMatches.map(m => {
+                const userBet = allBets.find(b => b.match_id === m.id && b.user_id === user.id);
+                const didWin = userBet && userBet.predicted_outcome === m.winner;
+                
+                let payoutMultiplier = 1;
+                if (m.winner === 'A') payoutMultiplier = m.margin_a;
+                if (m.winner === 'B') payoutMultiplier = m.margin_b;
+                if (m.winner === 'DRAW') payoutMultiplier = m.margin_draw;
+
+                return (
+                  <div key={m.id} style={{ backgroundColor: '#1e293b', opacity: 0.85, border: '1px solid #334155', borderRadius: '12px', padding: '16px', marginBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '700' }}>MATCH #{m.match_no}</span>
+                      <div style={{ fontSize: '15px', fontWeight: '700', marginTop: '2px' }}>{m.team_a} vs {m.team_b}</div>
+                      <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px' }}>
+                        Official Result: <strong style={{color: '#38bdf8'}}>{m.winner === 'DRAW' ? 'Draw 🤝' : m.winner === 'A' ? m.team_a : m.team_b}</strong>
                       </div>
                     </div>
-                  )}
+                    <div style={{ textAlign: 'right' }}>
+                      {userBet ? (
+                        <div>
+                          <div style={{ fontSize: '13px', color: '#94a3b8' }}>Your Bid: ${userBet.amount} ({userBet.predicted_outcome})</div>
+                          <div style={{ fontSize: '14px', fontWeight: '800', marginTop: '4px', color: didWin ? '#4ade80' : '#f87171' }}>
+                            {didWin ? `✅ Won +$${(userBet.amount * payoutMultiplier).toFixed(2)}` : `❌ Lost -$${userBet.amount}`}
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: '12px', color: '#64748b', fontStyle: 'italic' }}>No Bid Placed</div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
 
-                </div>
-              );
-            })}
           </div>
 
+          {/* RIGHT SIDEBAR COLUMN: LEADERBOARD */}
           <div>
             <h3 style={{ fontSize: '18px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#38bdf8', marginBottom: '16px' }}>📊 Group Standings</h3>
             <div style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '20px' }}>
