@@ -10,9 +10,11 @@ export default function Dashboard() {
   const [betAmounts, setBetAmounts] = useState({});
   const [currentTime, setCurrentTime] = useState(new Date());
 
-  // Settings states
+  // Settings & Transfer states
   const [showSettings, setShowSettings] = useState(false);
   const [newPassword, setNewPassword] = useState('');
+  const [transferTarget, setTransferTarget] = useState('');
+  const [transferAmount, setTransferAmount] = useState('');
 
   useEffect(() => {
     const savedUser = JSON.parse(localStorage.getItem('app_user'));
@@ -24,7 +26,7 @@ export default function Dashboard() {
     }
 
     const timer = setInterval(() => {
-      currentTime: setCurrentTime(new Date());
+      setCurrentTime(new Date());
     }, 1000);
 
     return () => clearInterval(timer);
@@ -92,40 +94,63 @@ export default function Dashboard() {
     }
   };
 
-  // 🔐 SELF-SERVICE PASSWORD CHANGE
+  // 💸 VIRTUAL USER TO USER TRANSFER LOGIC
+  const handleVirtualTransfer = async (e) => {
+    e.preventDefault();
+    const amount = parseFloat(transferAmount);
+
+    if (!transferTarget) return alert('Please select a friend to send points to.');
+    if (isNaN(amount) || amount <= 0) return alert('Please enter a valid amount greater than 0.');
+    if (amount > parseFloat(user.purse)) return alert('Insufficient purse balance for this transfer!');
+    if (transferTarget === user.id) return alert('You cannot send points to yourself.');
+
+    if (!confirm(`Are you sure you want to transfer $${amount.toFixed(2)} to this user?`)) return;
+
+    try {
+      // 1. Fetch recipient's current balance
+      const { data: recipient, error: fetchErr } = await supabase.from('users').select('purse, username').eq('id', transferTarget).single();
+      if (fetchErr || !recipient) throw new Error('Recipient not found');
+
+      // 2. Deduct from Sender
+      const senderNewPurse = parseFloat(user.purse) - amount;
+      await supabase.from('users').update({ purse: senderNewPurse }).eq('id', user.id);
+
+      // 3. Add to Recipient
+      const recipientNewPurse = parseFloat(recipient.purse) + amount;
+      await supabase.from('users').update({ purse: recipientNewPurse }).eq('id', transferTarget);
+
+      alert(`✅ Successfully transferred $${amount.toFixed(2)} to ${recipient.username}!`);
+      setTransferAmount('');
+      setTransferTarget('');
+      fetchDashboardData(user.id);
+    } catch (err) {
+      alert('Transfer failed. Please try again.');
+    }
+  };
+
   const handleChangePassword = async (e) => {
     e.preventDefault();
     if (!newPassword.trim()) return alert('Please enter a valid password.');
     
-    const { error } = await supabase
-      .from('users')
-      .update({ password: newPassword })
-      .eq('id', user.id);
-
-    if (error) {
-      alert('Error updating password.');
-    } else {
+    const { error } = await supabase.from('users').update({ password: newPassword }).eq('id', user.id);
+    if (error) alert('Error updating password.');
+    else {
       alert('🔒 Password updated successfully!');
       setNewPassword('');
       setShowSettings(false);
     }
   };
 
-  // ❌ SELF-SERVICE ACCOUNT DELETION
   const handleDeleteAccount = async () => {
-    const confirmFirst = confirm("⚠️ WARNING: This will permanently delete your account, your purse balance, and all active bids. This action cannot be reversed. Proceed?");
+    const confirmFirst = confirm("⚠️ WARNING: This will permanently delete your account and all points. Proceed?");
     if (!confirmFirst) return;
-
-    const confirmFinal = confirm("Are you absolutely sure you want to completely erase your profile?");
+    const confirmFinal = confirm("Are you absolutely sure?");
     if (!confirmFinal) return;
 
     try {
-      // Clean up user stakes history first
       await supabase.from('bets').delete().eq('user_id', user.id);
-      // Remove the main profile line item
       await supabase.from('users').delete().eq('id', user.id);
-
-      alert("👋 Your account has been completely wiped. Logging out...");
+      alert("👋 Account deleted.");
       localStorage.removeItem('app_user');
       window.location.href = '/';
     } catch (err) {
@@ -142,12 +167,15 @@ export default function Dashboard() {
 
   const activeMatches = matches.filter(m => !m.winner);
   const settledMatches = matches.filter(m => m.winner);
+  
+  // Filter out the logged-in user so they can't send money to themselves
+  const transferPartners = usersList.filter(u => u.id !== user.id);
 
   return (
     <div style={{ backgroundColor: '#0f172a', minHeight: '100vh', fontFamily: 'system-ui, sans-serif', color: '#f8fafc', padding: '12px' }}>
       <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
         
-        {/* MOBILE RESPONSIVE HEADER */}
+        {/* HEADER */}
         <div style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', flexWrap: 'wrap', gap: '10px' }}>
             <div>
@@ -168,9 +196,31 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* SETTINGS UTILITY PANEL VIEW */}
+        {/* SETTINGS MENU (PASSWORD, ACCOUNT DELETION, AND VIRTUAL TRANSFER) */}
         {showSettings && (
-          <div style={{ backgroundColor: '#1e293b', border: '1px solid #ef4444', borderRadius: '16px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            
+            {/* NEW VIRTUAL TRANSFER FORM */}
+            <div>
+              <h3 style={{ margin: '0 0 4px 0', fontSize: '16px', color: '#38bdf8' }}>💸 Transfer Points to Friend</h3>
+              <p style={{ margin: '0 0 10px 0', fontSize: '12px', color: '#94a3b8' }}>Send virtual tokens from your wallet directly to another player.</p>
+              <form onSubmit={handleVirtualTransfer} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <select value={transferTarget} onChange={(e) => setTransferTarget(e.target.value)} style={{ padding: '10px', backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: '#fff', fontSize: '14px', width: '100%' }}>
+                  <option value="">-- Select Recipient --</option>
+                  {transferPartners.map(u => (
+                    <option key={u.id} value={u.id}>👤 {u.username}</option>
+                  ))}
+                </select>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input type="number" step="0.01" min="0.01" placeholder="Amount to send ($)" value={transferAmount} onChange={(e) => setTransferAmount(e.target.value)} style={{ flex: 1, padding: '10px', backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: '#fff', fontSize: '14px' }} />
+                  <button type="submit" style={{ backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '8px', padding: '0 20px', fontWeight: '700', cursor: 'pointer', fontSize: '14px' }}>Send</button>
+                </div>
+              </form>
+            </div>
+
+            <hr style={{ border: 'none', borderTop: '1px solid #334155', margin: '0' }} />
+
+            {/* PASSWORD UPDATE */}
             <div>
               <h3 style={{ margin: '0 0 4px 0', fontSize: '16px', color: '#f8fafc' }}>🔑 Change Password</h3>
               <form onSubmit={handleChangePassword} style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
@@ -179,11 +229,11 @@ export default function Dashboard() {
               </form>
             </div>
             
-            <hr style={{ border: 'none', borderTop: '1px solid #334155', margin: '4px 0' }} />
+            <hr style={{ border: 'none', borderTop: '1px solid #334155', margin: '0' }} />
 
+            {/* DANGER ZONE */}
             <div>
               <h3 style={{ margin: '0 0 4px 0', fontSize: '16px', color: '#f87171' }}>🚨 Danger Zone</h3>
-              <p style={{ margin: '0 0 10px 0', fontSize: '12px', color: '#94a3b8' }}>Completely wipe your credentials from our match platform forever.</p>
               <button onClick={handleDeleteAccount} style={{ backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 16px', fontWeight: '700', cursor: 'pointer', fontSize: '13px', width: '100%' }}>
                 Delete My Account Permanently
               </button>
