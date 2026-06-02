@@ -18,7 +18,13 @@ export default function Dashboard() {
     } else {
       window.location.href = '/';
     }
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+
+    // LIVE AUTOMATIC LOCK REFRESHER ENGINE
+    // This runs a state check every single second to compare system time vs kickoff time
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+
     return () => clearInterval(timer);
   }, []);
 
@@ -37,8 +43,12 @@ export default function Dashboard() {
   };
 
   const handlePlaceBet = async (matchId, kickoffTime) => {
+    // Hard server-side time validation check before processing to database
     const matchKickoff = new Date(kickoffTime);
-    if (new Date() >= matchKickoff) return alert('🔒 Prediction window closed!');
+    if (new Date() >= matchKickoff) {
+      alert('🔒 Too late! The match has started and predictions are locked.');
+      return;
+    }
 
     const prediction = predictions[matchId];
     const amountInput = parseInt(betAmounts[matchId]);
@@ -54,7 +64,7 @@ export default function Dashboard() {
 
     if (error) {
       await supabase.from('users').update({ purse: parseFloat(user.purse) }).eq('id', user.id);
-      alert('Bet error.');
+      alert('Bet saving mismatch error.');
     } else {
       alert('🎯 Bet locked in!');
       fetchDashboardData(user.id);
@@ -68,7 +78,6 @@ export default function Dashboard() {
 
   if (!user) return <div style={{ color: '#fff', backgroundColor: '#0f172a', minHeight: '100vh', padding: '20px' }}>Loading...</div>;
 
-  // Split matches into active vs completed history
   const activeMatches = matches.filter(m => !m.winner);
   const settledMatches = matches.filter(m => m.winner);
 
@@ -76,7 +85,7 @@ export default function Dashboard() {
     <div style={{ backgroundColor: '#0f172a', minHeight: '100vh', fontFamily: 'system-ui, sans-serif', color: '#f8fafc', padding: '24px' }}>
       <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'grid', gridTemplateColumns: '1fr', gap: '24px' }}>
         
-        {/* TOP BRAND NAV BAR */}
+        {/* NAV HUB */}
         <div style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '20px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '700' }}>👋 Welcome, {user.username}</h2>
@@ -84,26 +93,32 @@ export default function Dashboard() {
               💰 Purse Account: ${parseFloat(user.purse).toFixed(2)}
             </div>
           </div>
-          <button onClick={handleLogout} style={{ backgroundColor: 'transparent', border: '1px solid #475569', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600' }}>Logout</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+            <span style={{ fontSize: '13px', color: '#64748b', fontFamily: 'monospace', backgroundColor: '#0f172a', padding: '6px 12px', borderRadius: '6px', border: '1px solid #334155' }}>
+              ⏰ {currentTime.toLocaleTimeString('en-IN')}
+            </span>
+            <button onClick={handleLogout} style={{ backgroundColor: 'transparent', border: '1px solid #475569', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600' }}>Logout</button>
+          </div>
         </div>
 
-        {/* TWO COLUMN GRID LAYOUT */}
+        {/* TWO COLUMN INTERACTIVE FRAMEWORK */}
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr)', gap: '24px', alignItems: 'start' }}>
           
-          {/* MAIN COLUMN */}
           <div>
             <h3 style={{ fontSize: '18px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#38bdf8', marginBottom: '16px' }}>⚡ Live Match Cards</h3>
             
             {activeMatches.length === 0 ? (
-              <p style={{ color: '#64748b', fontSize: '14px', backgroundColor: '#1e293b', padding: '20px', borderRadius: '12px', border: '1px dashed #334155' }}>No active fixtures right now. Check back soon!</p>
+              <p style={{ color: '#64748b', fontSize: '14px', backgroundColor: '#1e293b', padding: '20px', borderRadius: '12px', border: '1px dashed #334155' }}>No active fixtures right now.</p>
             ) : (
               activeMatches.map(m => {
                 const matchKickoff = new Date(m.kickoff_time);
+                
+                // AUTOMATIC LOCK LOGIC CHECK FOR EACH MATCH ITEM IN REAL-TIME
                 const isClosed = currentTime >= matchKickoff;
+                
                 const myBet = allBets.find(b => b.match_id === m.id && b.user_id === user.id);
                 const matchBets = allBets.filter(b => b.match_id === m.id);
                 
-                // Dynamic calculations for live helper box
                 const selectedOutcome = predictions[m.id];
                 const enteredStake = parseFloat(betAmounts[m.id]) || 0;
                 let activeMultiplier = 0;
@@ -120,7 +135,7 @@ export default function Dashboard() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', paddingBottom: '12px', borderBottom: '1px solid #334155' }}>
                       <span style={{ fontSize: '12px', fontWeight: '700', color: '#94a3b8', letterSpacing: '0.05em' }}>MATCH NO. {m.match_no}</span>
                       <span style={{ fontSize: '11px', fontWeight: '800', padding: '4px 10px', borderRadius: '6px', color: '#fff', backgroundColor: isClosed ? '#b91c1c' : '#0284c7' }}>
-                        {isClosed ? '🔒 LOCKED' : '⏳ ACTIVE'}
+                        {isClosed ? '🔒 LOCKED & STARTED' : '⏳ BIDS OPEN'}
                       </span>
                     </div>
 
@@ -134,6 +149,7 @@ export default function Dashboard() {
                       📅 Kickoff: {matchKickoff.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} (IST)
                     </div>
 
+                    {/* ACTION CONTROLLERS AUTO-LOCK MECHANISM */}
                     {!myBet && !isClosed && (
                       <div style={{ backgroundColor: '#0f172a', padding: '16px', borderRadius: '12px', border: '1px solid #334155' }}>
                         <div style={{ display: 'flex', justifyContent: 'center', gap: '15px', marginBottom: '16px' }}>
@@ -159,7 +175,6 @@ export default function Dashboard() {
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                           <input type="number" min="1" placeholder="Enter Bid Amount ($)" value={betAmounts[m.id] || ''} onChange={(e) => setBetAmounts({ ...betAmounts, [m.id]: e.target.value })} style={{ padding: '12px', backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px', color: '#fff', outline: 'none', fontSize: '15px' }} />
                           
-                          {/* DYNAMIC CALCULATION LIVE HELPER BOX (Inspired by image_48b907.png) */}
                           {selectedOutcome && enteredStake > 0 && (
                             <div style={{ backgroundColor: 'rgba(56, 189, 248, 0.08)', border: '1px solid rgba(56, 189, 248, 0.2)', padding: '14px', borderRadius: '8px', fontSize: '13px', color: '#e2e8f0', lineHeight: '1.6' }}>
                               📈 <em>If correct:</em> You will get <strong>${potentialReturn.toFixed(2)}</strong> coins including a net profit of <strong style={{ color: '#4ade80' }}>${potentialProfit.toFixed(2)}</strong>.<br/>
@@ -172,15 +187,23 @@ export default function Dashboard() {
                       </div>
                     )}
 
-                    {myBet && (
-                      <div style={{ backgroundColor: 'rgba(2,132,199,0.15)', border: '1px solid rgba(2,132,199,0.3)', padding: '14px', borderRadius: '12px', textAlign: 'center', color: '#38bdf8', fontWeight: '600', fontSize: '14px' }}>
-                        🎯 Lock-in saved: <strong>${myBet.amount}</strong> on {myBet.predicted_outcome === 'DRAW' ? 'Draw' : myBet.predicted_outcome === 'A' ? m.team_a : m.team_b}
+                    {/* RED INDICATOR FOR THOSE WHO SATELLITE TO REFRESH OR MISSED IT */}
+                    {!myBet && isClosed && (
+                      <div style={{ backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', padding: '14px', borderRadius: '12px', textAlign: 'center', color: '#f87171', fontWeight: '600', fontSize: '14px' }}>
+                        🛑 Match has started. Prediction window is closed for this match!
                       </div>
                     )}
 
+                    {myBet && (
+                      <div style={{ backgroundColor: 'rgba(2,132,199,0.15)', border: '1px solid rgba(2,132,199,0.3)', padding: '14px', borderRadius: '12px', textAlign: 'center', color: '#38bdf8', fontWeight: '600', fontSize: '14px' }}>
+                        🎯 Lock-in saved: <strong>${myBet.amount}</strong> on {myBet.predicted_outcome === 'DRAW' ? 'Draw' : myBet.predicted_outcome === 'A' ? m.team_a : m.team_b} {isClosed && '🔒'}
+                      </div>
+                    )}
+
+                    {/* REAL-TIME GROUP VISIBILITY FLIP */}
                     {isClosed && (
                       <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px dashed #334155' }}>
-                        <div style={{ fontSize: '13px', fontWeight: '700', color: '#94a3b8', marginBottom: '8px' }}>👁️ Group Submissions:</div>
+                        <div style={{ fontSize: '13px', fontWeight: '700', color: '#94a3b8', marginBottom: '8px' }}>👁️ Group Submissions (Revealed at Kickoff):</div>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '8px' }}>
                           {matchBets.map(b => {
                             const lookup = usersList.find(ul => ul.id === b.user_id)?.username || 'Player';
@@ -199,7 +222,7 @@ export default function Dashboard() {
               })
             )}
 
-            {/* NEW SECTION: HISTORICAL RESULTS AND RETURNS TRACKER */}
+            {/* HISTORICAL RESULTS */}
             <h3 style={{ fontSize: '18px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#94a3b8', marginTop: '40px', marginBottom: '16px' }}>📜 Match History & Past Returns</h3>
             {settledMatches.length === 0 ? (
               <p style={{ color: '#64748b', fontSize: '14px' }}>No matches have been settled yet.</p>
@@ -241,7 +264,7 @@ export default function Dashboard() {
 
           </div>
 
-          {/* RIGHT SIDEBAR COLUMN: LEADERBOARD */}
+          {/* LEADERBOARD */}
           <div>
             <h3 style={{ fontSize: '18px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#38bdf8', marginBottom: '16px' }}>📊 Group Standings</h3>
             <div style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '20px' }}>
