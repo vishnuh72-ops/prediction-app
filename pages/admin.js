@@ -17,8 +17,7 @@ export default function AdminDashboard() {
   // Form State: Edit Purse
   const [editingUserId, setEditingUserId] = useState(null);
   const [newPurseValue, setNewPurseValue] = useState('');
-  const [newPurseValue, setNewPurseValue] = useState('');
-
+  
   useEffect(() => {
     // Basic verification gate check
     const savedUser = JSON.parse(localStorage.getItem('app_user'));
