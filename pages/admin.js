@@ -5,7 +5,7 @@ export default function AdminDashboard() {
   const [matches, setMatches] = useState([]);
   const [usersList, setUsersList] = useState([]);
   
-  -- Form State: Add Match --
+  // Form State: Add Match
   const [matchNo, setMatchNo] = useState('');
   const [teamA, setTeamA] = useState('');
   const [teamB, setTeamB] = useState('');
@@ -14,8 +14,9 @@ export default function AdminDashboard() {
   const [marginDraw, setMarginDraw] = useState('');
   const [kickoffTime, setKickoffTime] = useState('');
 
-  -- Form State: Edit Purse --
+  // Form State: Edit Purse
   const [editingUserId, setEditingUserId] = useState(null);
+  const [newPurseValue, setNewPurseValue] = useState('');
   const [newPurseValue, setNewPurseValue] = useState('');
 
   useEffect(() => {
