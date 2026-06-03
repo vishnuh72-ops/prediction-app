@@ -15,6 +15,11 @@ export default function Dashboard() {
   const [showSettings, setShowSettings] = useState(false);
   const [newPassword, setNewPassword] = useState('');
 
+  // P2P Token Transfer States
+  const [transferTargetId, setTransferTargetId] = useState('');
+  const [transferAmount, setTransferAmount] = useState('');
+  const [isTransferring, setIsTransferring] = useState(false);
+
   useEffect(() => {
     const savedUser = JSON.parse(localStorage.getItem('app_user'));
     if (savedUser && !savedUser.is_admin) {
@@ -32,19 +37,15 @@ export default function Dashboard() {
   }, []);
 
   const fetchDashboardData = async (currentUserId) => {
-    // Refresh user profile info
     const { data: uProfile } = await supabase.from('users').select('*').eq('id', currentUserId).single();
     if (uProfile) setUser(uProfile);
 
-    // Fetch active and completed tournament matches
     const { data: mData } = await supabase.from('matches').select('*').order('kickoff_time', { ascending: true });
     setMatches(mData || []);
 
-    // Fetch only THIS user's bets to ensure strict client-side anonymity
     const { data: bData } = await supabase.from('bets').select('*').eq('user_id', currentUserId);
     setAllBets(bData || []);
 
-    // Fetch leaderboard data (Sorted purely by purse settled by admin)
     const { data: scoreData } = await supabase
       .from('users')
       .select('id, username, purse')
@@ -67,18 +68,14 @@ export default function Dashboard() {
       return alert('Please enter a valid stake amount ($1 minimum or 0 to clear).');
     }
 
-    // Locate if there's already a locked stake for this specific match outcome
     const existingBet = allBets.find(b => b.match_id === matchId && b.predicted_outcome === outcome);
     const currentBetAmount = existingBet ? existingBet.amount : 0;
-    
-    // Calculate available wallet space safely
     const refundedPurse = parseFloat(user.purse || 0) + currentBetAmount;
 
     if (amountInput > refundedPurse) {
       return alert('Insufficient purse balance for this stake!');
     }
 
-    // Case A: User wants to drop/delete their bet by typing 0
     if (amountInput === 0) {
       if (!existingBet) return;
       
@@ -91,20 +88,12 @@ export default function Dashboard() {
       return;
     }
 
-    // Case B: Create or Update the specific outcome stake
     const newPurse = refundedPurse - amountInput;
-    
-    // Optimistic wallet update
     await supabase.from('users').update({ purse: newPurse }).eq('id', user.id);
 
     if (existingBet) {
-      const { error } = await supabase
-        .from('bets')
-        .update({ amount: amountInput })
-        .eq('id', existingBet.id);
-
+      const { error } = await supabase.from('bets').update({ amount: amountInput }).eq('id', existingBet.id);
       if (error) {
-        // Rollback on network slip
         await supabase.from('users').update({ purse: parseFloat(user.purse || 0) }).eq('id', user.id);
         alert('Error shifting your stake.');
       } else {
@@ -112,12 +101,8 @@ export default function Dashboard() {
         fetchDashboardData(user.id);
       }
     } else {
-      const { error } = await supabase
-        .from('bets')
-        .insert([{ user_id: user.id, match_id: matchId, predicted_outcome: outcome, amount: amountInput }]);
-
+      const { error } = await supabase.from('bets').insert([{ user_id: user.id, match_id: matchId, predicted_outcome: outcome, amount: amountInput }]);
       if (error) {
-        // Rollback
         await supabase.from('users').update({ purse: parseFloat(user.purse || 0) }).eq('id', user.id);
         alert('Error saving prediction.');
       } else {
@@ -127,10 +112,62 @@ export default function Dashboard() {
     }
   };
 
+  // NEW P2P TOKEN TRANSFER HANDLER
+  const handleTokenTransfer = async (e) => {
+    e.preventDefault();
+    const amountToTransfer = parseFloat(transferAmount);
+
+    if (!transferTargetId) return alert('Please select a recipient player.');
+    if (isNaN(amountToTransfer) || amountToTransfer <= 0) return alert('Please enter a valid amount greater than $0.');
+
+    setIsTransferring(true);
+
+    try {
+      // Fetch fresh, up-to-date wallet data for the sender to prevent multi-tab exploits
+      const { data: freshSender, error: senderErr } = await supabase.from('users').select('purse').eq('id', user.id).single();
+      if (senderErr || !freshSender) throw new Error('Could not verify wallet state.');
+
+      const currentBalance = parseFloat(freshSender.purse || 0);
+      const balanceAfterTransfer = currentBalance - amountToTransfer;
+
+      // Enforce Rule: Sender balance cannot drop to $25 or below
+      if (balanceAfterTransfer <= 25) {
+        alert(`❌ Transaction Denied! Your balance after sending must be strictly more than $25.00.\nMaximum you can currently send is $${(currentBalance - 25.01).toFixed(2)}.`);
+        setIsTransferring(false);
+        return;
+      }
+
+      // Fetch recipient's current wallet balance
+      const { data: freshReceiver, error: receiverErr } = await supabase.from('users').select('purse').eq('id', transferTargetId).single();
+      if (receiverErr || !freshReceiver) throw new Error('Recipient profile look-up failed.');
+
+      const receiverBalance = parseFloat(freshReceiver.purse || 0);
+
+      // Perform updates sequentially
+      await supabase.from('users').update({ purse: balanceAfterTransfer }).eq('id', user.id);
+      await supabase.from('users').update({ purse: receiverBalance + amountToTransfer }).eq('id', transferTargetId);
+
+      // Log receipt transaction into tracking table for account deletion rollbacks
+      await supabase.from('transfers').insert([{
+        sender_id: user.id,
+        receiver_id: transferTargetId,
+        amount: amountToTransfer
+      }]);
+
+      alert(`💸 Successfully transferred $${amountToTransfer.toFixed(2)}!`);
+      setTransferAmount('');
+      setTransferTargetId('');
+      fetchDashboardData(user.id);
+    } catch (err) {
+      alert(err.message || 'Transfer processing anomaly occurred.');
+    } finally {
+      setIsTransferring(false);
+    }
+  };
+
   const handleChangePassword = async (e) => {
     e.preventDefault();
     if (!newPassword.trim()) return alert('Please enter a valid password.');
-    
     const { error } = await supabase.from('users').update({ password: newPassword }).eq('id', user.id);
     if (error) alert('Error updating password.');
     else {
@@ -140,18 +177,37 @@ export default function Dashboard() {
     }
   };
 
+  // UPDATED ANTI-CHEAT ACCOUNT DELETION (Claws back all sent funds)
   const handleDeleteAccount = async () => {
     if (!confirm("⚠️ Proceeding will permanently purge your tournament profile. Continuous?")) return;
-    if (!confirm("Are you entirely sure? This cannot be undone.")) return;
+    if (!confirm("🚨 SECURITY CHECK: Deleting your account will AUTOMATICALLY claw back and deduct any money you ever transferred to other users to prevent burner-account exploits. Proceed?")) return;
 
     try {
+      // 1. Trace every single token transfer sent by this user
+      const { data: historicalSentTransfers } = await supabase.from('transfers').select('*').eq('sender_id', user.id);
+
+      if (historicalSentTransfers && historicalSentTransfers.length > 0) {
+        for (const trx of historicalSentTransfers) {
+          // Fetch the recipient's live wallet state
+          const { data: recipientProfile } = await supabase.from('users').select('purse').eq('id', trx.receiver_id).single();
+          
+          if (recipientProfile) {
+            // Deduct the gifted amount back out of their pool
+            const correctedPurse = parseFloat(recipientProfile.purse || 0) - parseFloat(trx.amount);
+            await supabase.from('users').update({ purse: correctedPurse }).eq('id', trx.receiver_id);
+          }
+        }
+      }
+
+      // 2. Once funds are successfully stripped, wipe out records and profile
       await supabase.from('bets').delete().eq('user_id', user.id);
       await supabase.from('users').delete().eq('id', user.id);
-      alert("Account removed.");
+
+      alert("Roster slot surrendered. All gifted funds successfully reclaimed.");
       localStorage.removeItem('app_user');
       window.location.href = '/';
     } catch (err) {
-      alert("Error deleting account.");
+      alert("Error executing cascading account purge.");
     }
   };
 
@@ -169,7 +225,7 @@ export default function Dashboard() {
     <div style={{ backgroundColor: '#0f172a', minHeight: '100vh', fontFamily: 'system-ui, sans-serif', color: '#f8fafc', padding: '12px' }}>
       <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
         
-        {/* TOP CODESPORTS MARQUEE HEADER */}
+        {/* TOP MARQUEE HEADER */}
         <div style={{ background: 'linear-gradient(135deg, #064e3b 0%, #022c22 100%)', border: '1px solid #10b981', borderRadius: '16px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px', boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', flexWrap: 'wrap', gap: '10px' }}>
             <div>
@@ -211,6 +267,41 @@ export default function Dashboard() {
           </div>
         )}
 
+        {/* NEW: ANTI-CHEAT P2P TOKEN VAULT EXCHANGE */}
+        <div style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '16px' }}>
+          <h3 style={{ margin: '0 0 4px 0', fontSize: '14px', fontWeight: '800', color: '#34d399', textTransform: 'uppercase', letterSpacing: '0.02em' }}>💸 Peer-to-Peer Token Transfer Vault</h3>
+          <p style={{ margin: '0 0 12px 0', fontSize: '12px', color: '#94a3b8' }}>
+            Loan balance to another user instantly. <strong>Rule:</strong> Your balance after transferring must remain strictly above <strong>$25.00</strong>. Leaving the tournament claws back all funds sent.
+          </p>
+          <form onSubmit={handleTokenTransfer} style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+            <select 
+              value={transferTargetId} 
+              onChange={(e) => setTransferTargetId(e.target.value)}
+              style={{ flex: 1, minWidth: '180px', padding: '10px', backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: '#fff', fontSize: '13px' }}
+            >
+              <option value="">-- Select Recipient Player --</option>
+              {usersList.filter(u => u.id !== user.id).map(u => (
+                <option key={u.id} value={u.id}>{u.username}</option>
+              ))}
+            </select>
+            <input 
+              type="number" 
+              step="0.01" 
+              placeholder="Amount to send ($)" 
+              value={transferAmount} 
+              onChange={(e) => setTransferAmount(e.target.value)}
+              style={{ width: '150px', padding: '10px', backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: '#fff', fontSize: '13px' }}
+            />
+            <button 
+              type="submit" 
+              disabled={isTransferring}
+              style={{ backgroundColor: '#10b981', color: '#022c22', border: 'none', padding: '10px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: '800', fontSize: '13px' }}
+            >
+              {isTransferring ? 'Processing...' : 'Authorize Transfer'}
+            </button>
+          </form>
+        </div>
+
         {/* MAIN DASHBOARD DISTRIBUTION */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '20px' }}>
           
@@ -231,7 +322,6 @@ export default function Dashboard() {
                 return (
                   <div key={m.id} style={{ backgroundColor: '#1e293b', border: isClosed ? '1px solid #334155' : '1px solid #064e3b', borderRadius: '16px', padding: '20px', marginBottom: '16px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
                     
-                    {/* CARD HEADER METADATA */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', paddingBottom: '10px', borderBottom: '1px solid #334155' }}>
                       <span style={{ fontSize: '11px', fontWeight: '800', color: '#94a3b8', letterSpacing: '0.05em' }}>MATCH NO. {m.match_no}</span>
                       <span style={{ fontSize: '10px', fontWeight: '900', padding: '4px 10px', borderRadius: '20px', color: '#fff', backgroundColor: isClosed ? '#ef4444' : '#10b981', letterSpacing: '0.02em' }}>
@@ -239,7 +329,6 @@ export default function Dashboard() {
                       </span>
                     </div>
 
-                    {/* MATCHUP TITLE PLATFORM */}
                     <div style={{ display: 'flex', justifyContent: 'space-around', alignItems: 'center', margin: '16px 0', gap: '10px' }}>
                       <div style={{ fontSize: '20px', fontWeight: '900', textAlign: 'center', flex: 1 }}>{m.team_a}</div>
                       <div style={{ backgroundColor: '#0f172a', color: '#10b981', fontSize: '11px', fontWeight: '900', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid #064e3b' }}>VS</div>
@@ -250,13 +339,11 @@ export default function Dashboard() {
                       📅 Kickoff: {matchKickoff.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })} (IST)
                     </div>
 
-                    {/* OUTCOME OPTIONS ARRAY */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                       {['A', 'DRAW', 'B'].map((outcome) => {
                         const labelName = outcome === 'A' ? m.team_a : outcome === 'B' ? m.team_b : '🤝 Match Draw';
                         const multiplier = outcome === 'A' ? m.margin_a : outcome === 'B' ? m.margin_b : m.margin_draw;
                         
-                        // Extract locked state for this individual specific bet outcome row
                         const individualBet = allBets.find(b => b.match_id === m.id && b.predicted_outcome === outcome);
                         const currentStake = individualBet ? individualBet.amount : 0;
 
@@ -319,7 +406,7 @@ export default function Dashboard() {
             )}
           </div>
 
-          {/* PERSISTENT LEADERBOARD PLATFORM */}
+          {/* STANDING LEADERBOARD */}
           <div style={{ width: '100%' }}>
             <h3 style={{ fontSize: '14px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#10b981', marginBottom: '12px' }}>📊 Standing Leaderboard</h3>
             <div style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
@@ -345,7 +432,6 @@ export default function Dashboard() {
               <p style={{ color: '#64748b', fontSize: '13px', fontStyle: 'italic' }}>No settled history records found on server.</p>
             ) : (
               settledMatches.map(m => {
-                // Find all stakes this user placed on this old completed game
                 const historicalUserBets = allBets.filter(b => b.match_id === m.id);
 
                 return (
