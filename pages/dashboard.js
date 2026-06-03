@@ -54,59 +54,60 @@ export default function Dashboard() {
     setUsersList(scoreData || []);
   };
 
- const handlePlaceBet = async (matchId, kickoffTime) => {
-    const matchKickoff = new Date(kickoffTime);
-    if (new Date() >= matchKickoff) {
-      alert('🔒 Too late! The match has started.');
-      return;
-    }
+ const handlePlaceBet = async (matchId, outcome, kickoffTime) => {
+  const matchKickoff = new Date(kickoffTime);
+  if (new Date() >= matchKickoff) {
+    alert('🔒 Too late! The match has started.');
+    return;
+  }
 
-    const prediction = predictions[matchId];
-    const amountInput = parseFloat(betAmounts[matchId]);
+  // Use the unique key we created in your JSX
+  const inputKey = `${matchId}_${outcome}`;
+  const amountInput = parseFloat(betAmounts[inputKey]);
 
-    // Basic Validation
-    if (!prediction) return alert('Select an outcome!');
-    if (isNaN(amountInput) || amountInput < 1) return alert('Minimum bid is $1.');
+  // Validation
+  if (isNaN(amountInput) || amountInput < 1) {
+    return alert('Please enter a valid bid amount of at least $1.');
+  }
 
-    // 1. Check if user has enough balance for this specific bet
-    if (amountInput > parseFloat(user.purse || 0)) {
-      return alert('Insufficient purse balance!');
-    }
+  // Check purse balance
+  if (amountInput > parseFloat(user.purse || 0)) {
+    return alert('Insufficient purse balance!');
+  }
 
-    try {
-      // 2. Deduct the amount from the user's purse immediately
-      const newPurse = parseFloat(user.purse || 0) - amountInput;
-      const { error: purseErr } = await supabase
-        .from('users')
-        .update({ purse: newPurse })
-        .eq('id', user.id);
+  try {
+    // 1. Deduct the amount
+    const newPurse = parseFloat(user.purse || 0) - amountInput;
+    const { error: purseErr } = await supabase
+      .from('users')
+      .update({ purse: newPurse })
+      .eq('id', user.id);
 
-      if (purseErr) throw new Error('Failed to update purse');
+    if (purseErr) throw new Error('Failed to update purse');
 
-      // 3. ALWAYS INSERT a new bet record
-      // We removed the update logic so you can have multiple records per match
-      const { error: insertErr } = await supabase
-        .from('bets')
-        .insert([{ 
-          user_id: user.id, 
-          match_id: matchId, 
-          predicted_outcome: prediction, 
-          amount: amountInput 
-        }]);
-      
-      if (insertErr) throw new Error('Failed to place bet');
+    // 2. Insert the bet
+    const { error: insertErr } = await supabase
+      .from('bets')
+      .insert([{ 
+        user_id: user.id, 
+        match_id: matchId, 
+        predicted_outcome: outcome, // Directly use the outcome string ('A', 'B', or 'DRAW')
+        amount: amountInput 
+      }]);
+    
+    if (insertErr) throw new Error('Failed to place bet: ' + insertErr.message);
 
-      alert('🎯 Bet placed successfully!');
-      
-      // Clear the input after success
-      setBetAmounts({ ...betAmounts, [matchId]: '' });
-      
-      // Refresh the data to show the new bet in your UI
-      fetchDashboardData(user.id);
-    } catch (err) {
-      alert('Error: ' + err.message);
-    }
-  };
+    alert('🎯 Bet placed successfully!');
+    
+    // Clear the specific input field
+    setBetAmounts({ ...betAmounts, [inputKey]: '' });
+    
+    // Refresh data
+    fetchDashboardData(user.id);
+  } catch (err) {
+    alert('Error: ' + err.message);
+  }
+};
 
   // NEW P2P TOKEN TRANSFER HANDLER
   const handleTokenTransfer = async (e) => {
