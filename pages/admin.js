@@ -5,7 +5,7 @@ export default function AdminDashboard() {
   const [matches, setMatches] = useState([]);
   const [usersList, setUsersList] = useState([]);
   
-  // Form State: Add Match
+  -- Form State: Add Match --
   const [matchNo, setMatchNo] = useState('');
   const [teamA, setTeamA] = useState('');
   const [teamB, setTeamB] = useState('');
@@ -14,7 +14,7 @@ export default function AdminDashboard() {
   const [marginDraw, setMarginDraw] = useState('');
   const [kickoffTime, setKickoffTime] = useState('');
 
-  // Form State: Edit Purse
+  -- Form State: Edit Purse --
   const [editingUserId, setEditingUserId] = useState(null);
   const [newPurseValue, setNewPurseValue] = useState('');
 
@@ -30,11 +30,9 @@ export default function AdminDashboard() {
   }, []);
 
   const fetchAdminData = async () => {
-    // Get all tournament fixtures
     const { data: mData } = await supabase.from('matches').select('*').order('match_no', { ascending: true });
     setMatches(mData || []);
 
-    // Get all players (exclude admin profiles)
     const { data: uData } = await supabase.from('users').select('*').eq('is_admin', false).order('username', { ascending: true });
     setUsersList(uData || []);
   };
@@ -52,7 +50,7 @@ export default function AdminDashboard() {
       margin_a: parseFloat(marginA),
       margin_b: parseFloat(marginB),
       margin_draw: parseFloat(marginDraw),
-      kickoff_time: new Date(kickoffTime).toISOString(), // Saves clean globally
+      kickoff_time: new Date(kickoffTime).toISOString(),
       winner: null
     }]);
 
@@ -70,9 +68,7 @@ export default function AdminDashboard() {
     if (!confirm(`Confirm result resolution state as: ${selectedWinner}? This computes wallet entries.`)) return;
 
     try {
-      // 1. Fetch the match specific properties to lock in odds
       const { data: targetMatch } = await supabase.from('matches').select('*').eq('id', matchId).single();
-      // 2. Pull all stakes associated with this particular fixture match id
       const { data: relatedBets } = await supabase.from('bets').select('*').eq('match_id', matchId);
 
       let multiplier = 1;
@@ -80,27 +76,18 @@ export default function AdminDashboard() {
       if (selectedWinner === 'B') multiplier = targetMatch.margin_b;
       if (selectedWinner === 'DRAW') multiplier = targetMatch.margin_draw;
 
-      // 3. Process every user placement loops
       if (relatedBets && relatedBets.length > 0) {
         for (const bet of relatedBets) {
           if (bet.predicted_outcome === selectedWinner) {
-            // Winning stake: compute return payout amount
             const payoutAmount = parseFloat(bet.amount) * multiplier;
-            
-            // Get user's current live balance
             const { data: profile } = await supabase.from('users').select('purse').eq('id', bet.user_id).single();
             const upgradedPurse = parseFloat(profile.purse || 0) + payoutAmount;
-
-            // Save back into individual profiles
             await supabase.from('users').update({ purse: upgradedPurse }).eq('id', bet.user_id);
           }
-          // Note: Losing stakes are already deducted upfront by dashboard logic, so they remain unchanged.
         }
       }
 
-      // 4. Update Match completion state flag
       await supabase.from('matches').update({ winner: selectedWinner }).eq('id', matchId);
-      
       alert('🎯 Match settled and wallet points assigned!');
       fetchAdminData();
     } catch (err) {
@@ -138,15 +125,21 @@ export default function AdminDashboard() {
     if (!confirm("Are you absolutely sure you want to clean out the database history fields?")) return;
 
     try {
-      await supabase.from('bets').delete().not('id', 'is', null); // Wipe out all bets
-      await supabase.from('matches').delete().not('id', 'is', null); // Wipe out all matches
-      await supabase.from('users').update({ purse: 100.00 }).eq('is_admin', false); // Hard reset purses
+      await supabase.from('bets').delete().not('id', 'is', null);
+      await supabase.from('matches').delete().not('id', 'is', null);
+      await supabase.from('users').update({ purse: 100.00 }).eq('is_admin', false);
       
       alert('🧹 Tournament environment restored completely back to 100$ baseline.');
       fetchAdminData();
     } catch (err) {
       alert('Global truncation rollback failure.');
     }
+  };
+
+  // ADDED: LOGOUT HANDLER FOR ADMIN SESSIONS
+  const handleLogout = () => {
+    localStorage.removeItem('app_user');
+    window.location.href = '/';
   };
 
   const activeMatches = matches.filter(m => !m.winner);
@@ -162,9 +155,16 @@ export default function AdminDashboard() {
             <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '900', color: '#ef4444' }}>🛠️ FIFA 2026 ARENA OPERATOR PANEL</h2>
             <p style={{ margin: '2px 0 0 0', fontSize: '13px', color: '#94a3b8' }}>Global Configuration Mode • All dates map into Indian Standard Time (IST)</p>
           </div>
-          <button onClick={handleNuclearReset} style={{ backgroundColor: '#b91c1c', border: 'none', color: '#fff', padding: '10px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: '800', fontSize: '13px', boxShadow: '0 4px 12px rgba(185,28,28,0.3)' }}>
-            🧹 Reset Whole Tournament ($100 Baseline)
-          </button>
+          
+          {/* UPDATED CONTROL WRAPPER WITH LOGOUT BUTTON */}
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <button onClick={handleNuclearReset} style={{ backgroundColor: '#b91c1c', border: 'none', color: '#fff', padding: '10px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: '800', fontSize: '13px', boxShadow: '0 4px 12px rgba(185,28,28,0.3)' }}>
+              🧹 Reset Whole Tournament ($100 Baseline)
+            </button>
+            <button onClick={handleLogout} style={{ backgroundColor: 'transparent', border: '1px solid #94a3b8', color: '#f8fafc', padding: '10px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: '700', fontSize: '13px', transition: 'all 0.2s' }}>
+              Exit Portal 🚪
+            </button>
+          </div>
         </div>
 
         {/* DOUBLE COLUMN PANELS */}
@@ -213,7 +213,6 @@ export default function AdminDashboard() {
                     {m.team_a} ({m.margin_a}x) <span style={{ color: '#10b981' }}>VS</span> {m.team_b} ({m.margin_b}x)
                   </div>
                   
-                  {/* WINNER DISPATCH STRIP */}
                   <div style={{ display: 'flex', gap: '6px' }}>
                     <button onClick={() => handleSettleMatch(m.id, 'A')} style={{ flex: 1, backgroundColor: '#0284c7', color: '#fff', border: 'none', padding: '8px', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '12px' }}>
                       🏆 {m.team_a} Won
