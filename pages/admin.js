@@ -1,272 +1,283 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../supabase';
 
-export default function Admin() {
-  const [isAdmin, setIsAdmin] = useState(false);
+export default function AdminDashboard() {
   const [matches, setMatches] = useState([]);
-  const [users, setUsers] = useState([]);
+  const [usersList, setUsersList] = useState([]);
   
+  // Form State: Add Match
   const [matchNo, setMatchNo] = useState('');
   const [teamA, setTeamA] = useState('');
   const [teamB, setTeamB] = useState('');
-  const [kickoff, setKickoff] = useState('');
   const [marginA, setMarginA] = useState('');
   const [marginB, setMarginB] = useState('');
   const [marginDraw, setMarginDraw] = useState('');
+  const [kickoffTime, setKickoffTime] = useState('');
 
-  const [selectedUser, setSelectedUser] = useState('');
-  const [newPurseAmount, setNewPurseAmount] = useState('');
+  // Form State: Edit Purse
+  const [editingUserId, setEditingUserId] = useState(null);
+  const [newPurseValue, setNewPurseValue] = useState('');
 
   useEffect(() => {
+    // Basic verification gate check
     const savedUser = JSON.parse(localStorage.getItem('app_user'));
     if (savedUser && savedUser.is_admin) {
-      setIsAdmin(true);
       fetchAdminData();
     } else {
+      alert("Unauthorized Access Portal.");
       window.location.href = '/';
     }
   }, []);
 
   const fetchAdminData = async () => {
+    // Get all tournament fixtures
     const { data: mData } = await supabase.from('matches').select('*').order('match_no', { ascending: true });
     setMatches(mData || []);
-    const { data: uData } = await supabase.from('users').select('*').order('username', { ascending: true });
-    setUsers(uData || []);
+
+    // Get all players (exclude admin profiles)
+    const { data: uData } = await supabase.from('users').select('*').eq('is_admin', false).order('username', { ascending: true });
+    setUsersList(uData || []);
   };
 
   const handleCreateMatch = async (e) => {
     e.preventDefault();
-    if (!matchNo || !teamA || !teamB || !kickoff || !marginA || !marginB || !marginDraw) return alert('Fill all fields');
+    if (!matchNo || !teamA || !teamB || !marginA || !marginB || !marginDraw || !kickoffTime) {
+      return alert('Please fill out all match setup fields.');
+    }
 
     const { error } = await supabase.from('matches').insert([{
       match_no: parseInt(matchNo),
       team_a: teamA,
       team_b: teamB,
-      kickoff_time: new Date(kickoff).toISOString(),
       margin_a: parseFloat(marginA),
       margin_b: parseFloat(marginB),
-      margin_draw: parseFloat(marginDraw)
+      margin_draw: parseFloat(marginDraw),
+      kickoff_time: new Date(kickoffTime).toISOString(), // Saves clean globally
+      winner: null
     }]);
 
-    if (error) alert('Error creating match');
-    else {
-      alert('Match created successfully!');
-      setMatchNo(''); setTeamA(''); setTeamB(''); setKickoff(''); setMarginA(''); setMarginB(''); setMarginDraw('');
+    if (error) {
+      alert('Error creating match parameters.');
+    } else {
+      alert('⚽ Match card generated successfully!');
+      setMatchNo(''); setTeamA(''); setTeamB(''); setMarginA(''); setMarginB(''); setMarginDraw(''); setKickoffTime('');
       fetchAdminData();
     }
   };
 
-  const handleSettleMatch = async (matchId, officialWinner) => {
-    if (!confirm(`Confirm outcome as: ${officialWinner}?`)) return;
+  const handleSettleMatch = async (matchId, selectedWinner) => {
+    if (!selectedWinner) return alert('Select a resolution state first.');
+    if (!confirm(`Confirm result resolution state as: ${selectedWinner}? This computes wallet entries.`)) return;
 
-    const { data: match } = await supabase.from('matches').select('*').eq('id', matchId).single();
-    const { data: bets } = await supabase.from('bets').select('*').eq('match_id', matchId);
+    try {
+      // 1. Fetch the match specific properties to lock in odds
+      const { data: targetMatch } = await supabase.from('matches').select('*').eq('id', matchId).single();
+      // 2. Pull all stakes associated with this particular fixture match id
+      const { data: relatedBets } = await supabase.from('bets').select('*').eq('match_id', matchId);
 
-    let activeMultiplier = 1;
-    if (officialWinner === 'A') activeMultiplier = parseFloat(match.margin_a);
-    if (officialWinner === 'B') activeMultiplier = parseFloat(match.margin_b);
-    if (officialWinner === 'DRAW') activeMultiplier = parseFloat(match.margin_draw);
+      let multiplier = 1;
+      if (selectedWinner === 'A') multiplier = targetMatch.margin_a;
+      if (selectedWinner === 'B') multiplier = targetMatch.margin_b;
+      if (selectedWinner === 'DRAW') multiplier = targetMatch.margin_draw;
 
-    if (bets && bets.length > 0) {
-      for (let bet of bets) {
-        if (bet.predicted_outcome === officialWinner) {
-          const payout = parseFloat(bet.amount) * activeMultiplier;
-          const { data: userProfile } = await supabase.from('users').select('purse').eq('id', bet.user_id).single();
-          const runningPurse = parseFloat(userProfile.purse);
+      // 3. Process every user placement loops
+      if (relatedBets && relatedBets.length > 0) {
+        for (const bet of relatedBets) {
+          if (bet.predicted_outcome === selectedWinner) {
+            // Winning stake: compute return payout amount
+            const payoutAmount = parseFloat(bet.amount) * multiplier;
+            
+            // Get user's current live balance
+            const { data: profile } = await supabase.from('users').select('purse').eq('id', bet.user_id).single();
+            const upgradedPurse = parseFloat(profile.purse || 0) + payoutAmount;
 
-          await supabase.from('users').update({ purse: runningPurse + payout }).eq('id', bet.user_id);
+            // Save back into individual profiles
+            await supabase.from('users').update({ purse: upgradedPurse }).eq('id', bet.user_id);
+          }
+          // Note: Losing stakes are already deducted upfront by dashboard logic, so they remain unchanged.
         }
       }
-    }
 
-    await supabase.from('matches').update({ winner: officialWinner }).eq('id', matchId);
-    alert('Match settled and payouts calculated anonymously!');
-    fetchAdminData();
-  };
-
-  const handleManualPurseEdit = async (e) => {
-    e.preventDefault();
-    if (!selectedUser || !newPurseAmount) return alert('Select user and entry amount');
-    const { error } = await supabase.from('users').update({ purse: parseFloat(newPurseAmount) }).eq('id', selectedUser);
-    if (error) alert('Failed to update balance');
-    else {
-      alert('User wallet updated.');
-      setSelectedUser(''); setNewPurseAmount('');
-      fetchAdminData();
-    }
-  };
-
-  // 🗑️ ADMIN USER DELETION MANAGEMENT
-  const handleDeleteUser = async (userId, username) => {
-    if (username === 'admin') return alert("Cannot delete master administrator profile.");
-    
-    const confirmDelete = confirm(`🚨 Are you sure you want to completely DELETE user "${username}"? This removes their stakes history and wallet permanently.`);
-    if (!confirmDelete) return;
-
-    try {
-      // 1. Wipe their stakes dependencies first
-      await supabase.from('bets').delete().eq('user_id', userId);
-      // 2. Remove the profile row item entirely
-      const { error } = await supabase.from('users').delete().eq('id', userId);
+      // 4. Update Match completion state flag
+      await supabase.from('matches').update({ winner: selectedWinner }).eq('id', matchId);
       
-      if (error) throw error;
-      alert(`💥 Account "${username}" has been wiped from the database.`);
+      alert('🎯 Match settled and wallet points assigned!');
       fetchAdminData();
     } catch (err) {
-      console.error(err);
-      alert("Error deleting user profile.");
+      alert('Resolution computation engine error.');
     }
   };
 
-  const handlePurgeAllMatches = async () => {
-    const check1 = confirm("🚨 HOLD ON! This will permanently DELETE all current match cards and any placed test bets from the database. This leaves your app entirely empty for the real FIFA 2026 World Cup games. Proceed?");
-    if (!check1) return;
+  const handleUpdatePurseDirect = async (userId) => {
+    const freshValue = parseFloat(newPurseValue);
+    if (isNaN(freshValue)) return alert('Input valid point numbers.');
 
-    const check2 = confirm("Confirming again: Delete every single fixture item forever?");
-    if (!check2) return;
+    const { error } = await supabase.from('users').update({ purse: freshValue }).eq('id', userId);
+    if (!error) {
+      alert('🪙 User balance manually re-assigned.');
+      setEditingUserId(null);
+      setNewPurseValue('');
+      fetchAdminData();
+    }
+  };
+
+  const handleDeleteUser = async (userId, userName) => {
+    if (!confirm(`🚨 Are you completely sure you want to drop player "${userName}" from the league profile?`)) return;
+
+    await supabase.from('bets').delete().eq('user_id', userId);
+    const { error } = await supabase.from('users').delete().eq('id', userId);
+    
+    if (!error) {
+      alert('User removed from roster configuration.');
+      fetchAdminData();
+    }
+  };
+
+  const handleNuclearReset = async () => {
+    if (!confirm("☢️ WARNING: This button will completely clear ALL matches, ALL bets, and reset every player back to $100.00. Proceed?")) return;
+    if (!confirm("Are you absolutely sure you want to clean out the database history fields?")) return;
 
     try {
-      await supabase.from('bets').delete().not('id', 'is', null);
-      const { error } = await supabase.from('matches').delete().not('id', 'is', null);
-      if (error) throw error;
-      alert("💥 Success! Your system is now an absolute blank slate. Ready for official tournament entry.");
+      await supabase.from('bets').delete().not('id', 'is', null); // Wipe out all bets
+      await supabase.from('matches').delete().not('id', 'is', null); // Wipe out all matches
+      await supabase.from('users').update({ purse: 100.00 }).eq('is_admin', false); // Hard reset purses
+      
+      alert('🧹 Tournament environment restored completely back to 100$ baseline.');
       fetchAdminData();
     } catch (err) {
-      console.error(err);
-      alert("Error purging records.");
+      alert('Global truncation rollback failure.');
     }
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('app_user');
-    window.location.href = '/';
-  };
-
-  if (!isAdmin) return <p>Checking credentials...</p>;
-
-  // Filter out the admin account from the structural view table layout
-  const absolutePlayers = users.filter(u => !u.is_admin);
+  const activeMatches = matches.filter(m => !m.winner);
+  const settledMatches = matches.filter(m => m.winner);
 
   return (
-    <div style={{ fontFamily: 'sans-serif', maxWidth: '900px', margin: '30px auto', padding: '20px', color: '#333' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '2px solid #333', paddingBottom: '10px' }}>
-        <h2>👑 Administrator Console (Blind Admin Mode)</h2>
-        <button onClick={handleLogout} style={{ background: '#ff4d4d', color: '#fff', border: 'none', borderRadius: '4px', padding: '5px 15px', cursor: 'pointer' }}>Logout</button>
-      </div>
-
-      <section style={{ background: '#fef2f2', padding: '16px', borderRadius: '8px', marginTop: '20px', border: '1px solid #fee2e2', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <h4 style={{ margin: '0 0 4px 0', color: '#991b1b' }}>🏆 Official FIFA World Cup 2026 Preparation Tool</h4>
-          <p style={{ margin: 0, fontSize: '13px', color: '#7f1d1d' }}>Use this to clear out test games completely before entering the official tournament match cards.</p>
+    <div style={{ backgroundColor: '#022c22', minHeight: '100vh', fontFamily: 'system-ui, sans-serif', color: '#f8fafc', padding: '16px' }}>
+      <div style={{ maxWidth: '1100px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        
+        {/* ADMIN CONTROL PANEL HEADER */}
+        <div style={{ background: 'linear-gradient(135deg, #111827 0%, #1f2937 100%)', border: '2px solid #b91c1c', borderRadius: '16px', padding: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '900', color: '#ef4444' }}>🛠️ FIFA 2026 ARENA OPERATOR PANEL</h2>
+            <p style={{ margin: '2px 0 0 0', fontSize: '13px', color: '#94a3b8' }}>Global Configuration Mode • All dates map into Indian Standard Time (IST)</p>
+          </div>
+          <button onClick={handleNuclearReset} style={{ backgroundColor: '#b91c1c', border: 'none', color: '#fff', padding: '10px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: '800', fontSize: '13px', boxShadow: '0 4px 12px rgba(185,28,28,0.3)' }}>
+            🧹 Reset Whole Tournament ($100 Baseline)
+          </button>
         </div>
-        <button onClick={handlePurgeAllMatches} style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: '6px', padding: '10px 16px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>
-          Delete All Match Cards Completely
-        </button>
-      </section>
 
-      <section style={{ background: '#f9f9f9', padding: '20px', borderRadius: '8px', marginTop: '20px', border: '1px solid #ddd' }}>
-        <h3>1. Create Live Match Card</h3>
-        <form onSubmit={handleCreateMatch} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
-          <input type="number" placeholder="Match Number" value={matchNo} onChange={e=>setMatchNo(e.target.value)} style={{padding:'8px'}} />
-          <input type="datetime-local" placeholder="Kickoff Time (IST)" value={kickoff} onChange={e=>setKickoff(e.target.value)} style={{padding:'8px'}} />
-          <input type="text" placeholder="Team A" value={teamA} onChange={e=>setTeamA(e.target.value)} style={{padding:'8px'}} />
-          <input type="text" placeholder="Team B" value={teamB} onChange={e=>setTeamB(e.target.value)} style={{padding:'8px'}} />
-          <input type="number" step="0.01" placeholder="Team A Margin Multiplier" value={marginA} onChange={e=>setMarginA(e.target.value)} style={{padding:'8px'}} />
-          <input type="number" step="0.01" placeholder="Team B Margin Multiplier" value={marginB} onChange={e=>setMarginB(e.target.value)} style={{padding:'8px'}} />
-          <input type="number" step="0.01" placeholder="Draw Margin Multiplier" value={marginDraw} onChange={e=>setMarginDraw(e.target.value)} style={{padding:'8px', gridColumn: 'span 2'}} />
-          <button type="submit" style={{gridColumn: 'span 2', background: '#0070f3', color: 'white', border:'none', padding:'10px', borderRadius:'4px', cursor:'pointer', fontWeight:'bold'}}>Publish Match</button>
-        </form>
-      </section>
+        {/* DOUBLE COLUMN PANELS */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '20px' }}>
+          
+          {/* COLUMN 1: MATCH GENERATOR FIELD */}
+          <div style={{ backgroundColor: '#111827', border: '1px solid #1f2937', borderRadius: '16px', padding: '20px' }}>
+            <h3 style={{ margin: '0 0 14px 0', fontSize: '16px', fontWeight: '800', color: '#10b981', borderBottom: '1px solid #1f2937', paddingBottom: '6px' }}>➕ Deploy New Match Card</h3>
+            <form onSubmit={handleCreateMatch} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <input type="number" placeholder="Match No." value={matchNo} onChange={(e) => setMatchNo(e.target.value)} style={{ width: '100px', padding: '10px', backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px', color: '#fff' }} />
+                <input type="text" placeholder="Team A (e.g. Argentina)" value={teamA} onChange={(e) => setTeamA(e.target.value)} style={{ flex: 1, padding: '10px', backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px', color: '#fff' }} />
+                <input type="text" placeholder="Team B (e.g. France)" value={teamB} onChange={(e) => setTeamB(e.target.value)} style={{ flex: 1, padding: '10px', backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px', color: '#fff' }} />
+              </div>
+              
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <input type="number" step="0.01" placeholder="Odds Team A (e.g. 2.5)" value={marginA} onChange={(e) => setMarginA(e.target.value)} style={{ flex: 1, padding: '10px', backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px', color: '#fff' }} />
+                <input type="number" step="0.01" placeholder="Odds Draw (e.g. 3.1)" value={marginDraw} onChange={(e) => setMarginDraw(e.target.value)} style={{ flex: 1, padding: '10px', backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px', color: '#fff' }} />
+                <input type="number" step="0.01" placeholder="Odds Team B (e.g. 2.6)" value={marginB} onChange={(e) => setMarginB(e.target.value)} style={{ flex: 1, padding: '10px', backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px', color: '#fff' }} />
+              </div>
 
-      <section style={{ background: '#f9f9f9', padding: '20px', borderRadius: '8px', marginTop: '20px', border: '1px solid #ddd' }}>
-        <h3>2. Adjust Wallets / Close Loans</h3>
-        <form onSubmit={handleManualPurseEdit} style={{ display: 'flex', gap: '15px' }}>
-          <select value={selectedUser} onChange={e=>setSelectedUser(e.target.value)} style={{padding:'8px', flex: 2}}>
-            <option value="">-- Select User --</option>
-            {absolutePlayers.map(u => (
-              <option key={u.id} value={u.id}>{u.username} (Current: ${u.purse})</option>
-            ))}
-          </select>
-          <input type="number" step="0.01" placeholder="New Balance ($)" value={newPurseAmount} onChange={e=>setNewPurseAmount(e.target.value)} style={{padding:'8px', flex: 1}} />
-          <button type="submit" style={{background: '#4caf50', color: 'white', border:'none', padding:'8px 15px', borderRadius:'4px', cursor:'pointer', fontWeight:'bold'}}>Update Balance</button>
-        </form>
-      </section>
+              <div>
+                <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '4px', fontWeight: '700' }}>📆 KICKOFF TIME (INPUT IN LOCAL INDIAN TIME BASELINE):</label>
+                <input type="datetime-local" value={kickoffTime} onChange={(e) => setKickoffTime(e.target.value)} style={{ width: '100%', padding: '10px', backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px', color: '#fff', boxSizing: 'border-box' }} />
+              </div>
 
-      {/* 📊 NEW DIRECT REGISTERED USER CONTROL CENTER PANEL */}
-      <section style={{ background: '#f9f9f9', padding: '20px', borderRadius: '8px', marginTop: '20px', border: '1px solid #ddd' }}>
-        <h3>👥 Active Group Players & Account Moderation</h3>
-        <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '10px' }}>
-          <thead>
-            <tr style={{ background: '#475569', color: '#fff', textAlign: 'left' }}>
-              <th style={{padding:'10px'}}>Username</th>
-              <th>Current Purse Balance</th>
-              <th style={{textAlign: 'center'}}>Moderation Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {absolutePlayers.length === 0 ? (
-              <tr><td colSpan="3" style={{padding:'15px', color:'#64748b', fontStyle:'italic'}}>No users registered yet.</td></tr>
+              <button type="submit" style={{ padding: '12px', backgroundColor: '#10b981', border: 'none', color: '#022c22', borderRadius: '8px', fontWeight: '800', fontSize: '14px', cursor: 'pointer', marginTop: '6px' }}>
+                Broadcast Live Match Card
+              </button>
+            </form>
+          </div>
+
+          {/* COLUMN 2: ACTIVE MATCHES & SETTLEMENT ENGINE */}
+          <div style={{ backgroundColor: '#111827', border: '1px solid #1f2937', borderRadius: '16px', padding: '20px' }}>
+            <h3 style={{ margin: '0 0 14px 0', fontSize: '16px', fontWeight: '800', color: '#f59e0b', borderBottom: '1px solid #1f2937', paddingBottom: '6px' }}>⚡ Pending Settlement Queue</h3>
+            {activeMatches.length === 0 ? (
+              <p style={{ color: '#64748b', fontSize: '13px', fontStyle: 'italic' }}>No pending active matches waiting on verification.</p>
             ) : (
-              absolutePlayers.map(u => (
-                <tr key={u.id} style={{ borderBottom: '1px solid #ddd' }}>
-                  <td style={{padding: '12px 10px', fontWeight: 'bold'}}>👤 {u.username}</td>
-                  <td style={{color: '#0284c7', fontWeight: 'bold'}}>${parseFloat(u.purse).toFixed(2)}</td>
-                  <td style={{textAlign: 'center'}}>
-                    <button onClick={() => handleDeleteUser(u.id, u.username)} style={{ background: '#ef4444', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
-                      Delete User Profile
+              activeMatches.map(m => (
+                <div key={m.id} style={{ backgroundColor: '#1f2937', padding: '14px', borderRadius: '12px', marginBottom: '12px', border: '1px solid #374151' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>
+                    <span>MATCH #{m.match_no}</span>
+                    <span>Kickoff: {new Date(m.kickoff_time).toLocaleTimeString('en-IN')} (IST)</span>
+                  </div>
+                  <div style={{ fontSize: '15px', fontWeight: '800', marginBottom: '12px', textAlign: 'center' }}>
+                    {m.team_a} ({m.margin_a}x) <span style={{ color: '#10b981' }}>VS</span> {m.team_b} ({m.margin_b}x)
+                  </div>
+                  
+                  {/* WINNER DISPATCH STRIP */}
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button onClick={() => handleSettleMatch(m.id, 'A')} style={{ flex: 1, backgroundColor: '#0284c7', color: '#fff', border: 'none', padding: '8px', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '12px' }}>
+                      🏆 {m.team_a} Won
                     </button>
-                  </td>
-                </tr>
+                    <button onClick={() => handleSettleMatch(m.id, 'DRAW')} style={{ flex: 1, backgroundColor: '#4b5563', color: '#fff', border: 'none', padding: '8px', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '12px' }}>
+                      🤝 Ended in Draw
+                    </button>
+                    <button onClick={() => handleSettleMatch(m.id, 'B')} style={{ flex: 1, backgroundColor: '#0284c7', color: '#fff', border: 'none', padding: '8px', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '12px' }}>
+                      🏆 {m.team_b} Won
+                    </button>
+                  </div>
+                </div>
               ))
             )}
-          </tbody>
-        </table>
-      </section>
+          </div>
 
-      <section style={{ marginTop: '30px' }}>
-        <h3>4. Active Fixtures & Blind Settlement</h3>
-        <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '10px' }}>
-          <thead>
-            <tr style={{ background: '#333', color: '#fff', textAlign: 'left' }}>
-              <th style={{padding:'10px'}}>#</th>
-              <th>Match Fixture</th>
-              <th>Odds</th>
-              <th>Privacy Status</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {matches.map(m => (
-              <tr key={m.id} style={{ borderBottom: '1px solid #ddd' }}>
-                <td style={{padding:'12px 10px'}}>{m.match_no}</td>
-                <td>
-                  <strong>{m.team_a}</strong> vs <strong>{m.team_b}</strong>
-                  <div style={{fontSize: '11px', color: '#666', marginTop: '4px'}}>
-                    {new Date(m.kickoff_time).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
+          {/* PLAYER ROSTER & PURSE MANIPULATION TRACK */}
+          <div style={{ backgroundColor: '#111827', border: '1px solid #1f2937', borderRadius: '16px', padding: '20px' }}>
+            <h3 style={{ margin: '0 0 14px 0', fontSize: '16px', fontWeight: '800', color: '#94a3b8', borderBottom: '1px solid #1f2937', paddingBottom: '6px' }}>👥 Active Player Profiles & Wallets</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {usersList.map(u => (
+                <div key={u.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#1f2937', padding: '10px 14px', borderRadius: '8px' }}>
+                  <div>
+                    <span style={{ fontWeight: '800', fontSize: '14px' }}>👤 {u.username}</span>
+                    <span style={{ marginLeft: '12px', color: '#10b981', fontWeight: '700', fontSize: '14px' }}>${parseFloat(u.purse || 0).toFixed(2)}</span>
                   </div>
-                </td>
-                <td>A: {m.margin_a}x | B: {m.margin_b}x | X: {m.margin_draw}x</td>
-                
-                <td style={{color: '#666', fontSize: '13px', fontStyle: 'italic'}}>
-                  🔒 User stakes encrypted & blind until kickoff.
-                </td>
+                  
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    {editingUserId === u.id ? (
+                      <div style={{ display: 'flex', gap: '4px' }}>
+                        <input type="number" step="0.01" placeholder="New $" value={newPurseValue} onChange={(e) => setNewPurseValue(e.target.value)} style={{ width: '80px', padding: '6px', backgroundColor: '#111827', border: '1px solid #4b5563', borderRadius: '6px', color: '#fff', fontSize: '12px' }} />
+                        <button onClick={() => handleUpdatePurseDirect(u.id)} style={{ backgroundColor: '#10b981', color: '#022c22', padding: '6px 10px', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '700' }}>Save</button>
+                        <button onClick={() => setEditingUserId(null)} style={{ backgroundColor: '#374151', color: '#fff', padding: '6px 10px', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px' }}>X</button>
+                      </div>
+                    ) : (
+                      <>
+                        <button onClick={() => { setEditingUserId(u.id); setNewPurseValue(u.purse); }} style={{ backgroundColor: '#4b5563', color: '#fff', padding: '4px 10px', border: 'none', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', fontWeight: '600' }}>
+                          ✏️ Edit Balance
+                        </button>
+                        <button onClick={() => handleDeleteUser(u.id, u.username)} style={{ backgroundColor: 'transparent', border: '1px solid #ef4444', color: '#ef4444', padding: '4px 10px', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', fontWeight: '600' }}>
+                          Kick
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
 
-                <td>
-                  {m.winner ? (
-                    <span style={{ color: 'green', fontWeight: 'bold' }}>Settled ({m.winner})</span>
-                  ) : (
-                    <div style={{ display: 'flex', gap: '4px' }}>
-                      <button onClick={() => handleSettleMatch(m.id, 'A')} style={{padding:'4px 6px', cursor:'pointer', fontSize: '12px'}}>{m.team_a}</button>
-                      <button onClick={() => handleSettleMatch(m.id, 'B')} style={{padding:'4px 6px', cursor:'pointer', fontSize: '12px'}}>{m.team_b}</button>
-                      <button onClick={() => handleSettleMatch(m.id, 'DRAW')} style={{padding:'4px 6px', cursor:'pointer', fontSize: '12px'}}>Draw</button>
-                    </div>
-                  )}
-                </td>
-              </tr>
+          {/* SETTLED ARCHIVE TRACK */}
+          <div style={{ backgroundColor: '#111827', opacity: 0.75, border: '1px solid #1f2937', borderRadius: '16px', padding: '20px' }}>
+            <h3 style={{ margin: '0 0 10px 0', fontSize: '14px', fontWeight: '800', color: '#6b7280', textTransform: 'uppercase' }}>📜 Settled Historic Log</h3>
+            {settledMatches.map(m => (
+              <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', padding: '6px 0', borderBottom: '1px solid #1f2937' }}>
+                <span>Match #{m.match_no}: {m.team_a} vs {m.team_b}</span>
+                <span style={{ color: '#10b981', fontWeight: '800' }}>Resolved: {m.winner}</span>
+              </div>
             ))}
-          </tbody>
-        </table>
-      </section>
+          </div>
+
+        </div>
+
+      </div>
     </div>
   );
 }
