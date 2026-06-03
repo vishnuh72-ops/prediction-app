@@ -16,7 +16,7 @@ export default function Dashboard() {
   const [transferTarget, setTransferTarget] = useState('');
   const [transferAmount, setTransferAmount] = useState('');
 
-  // 🛠️ FIX 1: Safe name extraction helper used everywhere
+  // 🛠️ HELPER: Uniformly extracts the best available name property
   const getDisplayName = (u) => {
     if (!u) return 'Player';
     return u.username || u.name || u.display_name || 'Player';
@@ -48,16 +48,18 @@ export default function Dashboard() {
     const { data: bData } = await supabase.from('bets').select('*');
     setAllBets(bData || []);
 
-    // 🛠️ FIX 2: Explicit comma selection and data fallback map to stop $NaN
+    // 🛠️ CRITICAL FIX: Changed column arguments to a single comma-separated string
     const { data: scoreData } = await supabase
       .from('users')
       .select('id, username, name, display_name, purse')
       .eq('is_admin', false);
     
+    // 🛠️ CRITICAL FIX: Sanitize the numeric inputs right here to block $NaN leaks 
+    // and manually handle descending leaderboard sorting safely
     const formattedData = (scoreData || []).map(u => ({
       ...u,
-      purse: parseFloat(u.purse) || 0 // Forces null/undefined to become 0
-    })).sort((a, b) => b.purse - a.purse); // Sorts highest points first
+      purse: parseFloat(u.purse) || 0
+    })).sort((a, b) => b.purse - a.purse);
 
     setUsersList(formattedData);
   };
@@ -77,7 +79,7 @@ export default function Dashboard() {
 
     const existingBet = allBets.find(b => b.match_id === matchId && b.user_id === user.id);
     const currentBetAmount = existingBet ? existingBet.amount : 0;
-    const refundedPurse = parseFloat(user.purse) + currentBetAmount;
+    const refundedPurse = parseFloat(user.purse || 0) + currentBetAmount;
 
     if (amountInput > refundedPurse) return alert('Insufficient purse balance!');
 
@@ -91,7 +93,7 @@ export default function Dashboard() {
         .eq('id', existingBet.id);
 
       if (error) {
-        await supabase.from('users').update({ purse: parseFloat(user.purse) }).eq('id', user.id);
+        await supabase.from('users').update({ purse: parseFloat(user.purse || 0) }).eq('id', user.id);
         alert('Error updating your bet.');
       } else {
         alert('🎯 Your bid has been updated successfully!');
@@ -101,7 +103,7 @@ export default function Dashboard() {
       const { error } = await supabase.from('bets').insert([{ user_id: user.id, match_id: matchId, predicted_outcome: prediction, amount: amountInput }]);
 
       if (error) {
-        await supabase.from('users').update({ purse: parseFloat(user.purse) }).eq('id', user.id);
+        await supabase.from('users').update({ purse: parseFloat(user.purse || 0) }).eq('id', user.id);
         alert('Bet saving error.');
       } else {
         alert('🎯 Bet locked in!');
@@ -117,9 +119,10 @@ export default function Dashboard() {
 
     if (!transferTarget) return alert('Please select a friend to send points to.');
     if (isNaN(amount) || amount <= 0) return alert('Please enter a valid amount greater than 0.');
-    if (amount > parseFloat(user.purse)) return alert('Insufficient purse balance for this transfer!');
-    if (transferTarget === user.id) return alert('You cannot send points to yourself.');
+    if (amount > parseFloat(user.purse || 0)) return alert('Insufficient purse balance for this transfer!');
+    if (transferTarget.toString() === user.id.toString()) return alert('You cannot send points to yourself.');
 
+    // 🛠️ FIX: String normalization comparison to guarantee safe recipient matchmaking
     const recipient = usersList.find(u => u.id.toString() === transferTarget.toString());
     const recipientName = getDisplayName(recipient);
     
@@ -129,7 +132,7 @@ export default function Dashboard() {
       const { data: targetUser, error: fetchErr } = await supabase.from('users').select('purse, username, name, display_name').eq('id', transferTarget).single();
       if (fetchErr || !targetUser) throw new Error('Recipient not found');
 
-      const senderNewPurse = parseFloat(user.purse) - amount;
+      const senderNewPurse = parseFloat(user.purse || 0) - amount;
       await supabase.from('users').update({ purse: senderNewPurse }).eq('id', user.id);
 
       const recipientNewPurse = (parseFloat(targetUser.purse) || 0) + amount;
@@ -184,7 +187,6 @@ export default function Dashboard() {
   const activeMatches = matches.filter(m => !m.winner);
   const settledMatches = matches.filter(m => m.winner);
   
-  // Exclude current logged-in user from the peer transfer selection box
   const transferPartners = usersList.filter(u => u.id !== user.id);
 
   return (
@@ -201,21 +203,4 @@ export default function Dashboard() {
               </div>
             </div>
             <div style={{ display: 'flex', gap: '8px' }}>
-              <button onClick={() => setShowSettings(!showSettings)} style={{ backgroundColor: '#475569', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>
-                {showSettings ? 'Close Menu' : '⚙️ Settings'}
-              </button>
-              <button onClick={handleLogout} style={{ backgroundColor: 'transparent', border: '1px solid #475569', color: '#94a3b8', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>Logout</button>
-            </div>
-          </div>
-          <div style={{ fontSize: '12px', color: '#64748b', fontFamily: 'monospace', backgroundColor: '#0f172a', padding: '6px', borderRadius: '6px', border: '1px solid #334155', textAlign: 'center' }}>
-            ⏰ Clock: {currentTime.toLocaleTimeString('en-IN')}
-          </div>
-        </div>
-
-        {/* UTILITY CONTROL PANELS (SETTINGS & TRANSFERS) */}
-        {showSettings && (
-          <div style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            
-            {/* VIRTUAL TRANSACTIONS SYSTEM */}
-            <div>
-              <h3 style={{ margin: '0 0 4px 0', fontSize: '16px', color: '#38bdf8'
+              <button onClick={() => setShowSettings(!showSettings)} style={{ backgroundColor: '#475569', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600',
