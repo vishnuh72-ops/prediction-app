@@ -6,15 +6,14 @@ export default function Dashboard() {
   const [matches, setMatches] = useState([]);
   const [allBets, setAllBets] = useState([]);
   const [usersList, setUsersList] = useState([]);
-  const [predictions, setPredictions] = useState({});
+  
+  // Track inputs per match AND outcome (e.g., predictions["matchId_A"] = true)
   const [betAmounts, setBetAmounts] = useState({});
   const [currentTime, setCurrentTime] = useState(new Date());
 
-  // Settings & Transfer states
+  // Navigation & Settings states
   const [showSettings, setShowSettings] = useState(false);
   const [newPassword, setNewPassword] = useState('');
-  const [transferTarget, setTransferTarget] = useState('');
-  const [transferAmount, setTransferAmount] = useState('');
 
   useEffect(() => {
     const savedUser = JSON.parse(localStorage.getItem('app_user'));
@@ -33,103 +32,98 @@ export default function Dashboard() {
   }, []);
 
   const fetchDashboardData = async (currentUserId) => {
+    // Refresh user profile info
     const { data: uProfile } = await supabase.from('users').select('*').eq('id', currentUserId).single();
     if (uProfile) setUser(uProfile);
 
-    const { data: mData } = await supabase.from('matches').select('*').order('match_no', { ascending: true });
+    // Fetch active and completed tournament matches
+    const { data: mData } = await supabase.from('matches').select('*').order('kickoff_time', { ascending: true });
     setMatches(mData || []);
 
-    const { data: bData } = await supabase.from('bets').select('*');
+    // Fetch only THIS user's bets to ensure strict client-side anonymity
+    const { data: bData } = await supabase.from('bets').select('*').eq('user_id', currentUserId);
     setAllBets(bData || []);
 
-    // FIX: Combined separate string arguments into a single comma-separated query string
+    // Fetch leaderboard data (Sorted purely by purse settled by admin)
     const { data: scoreData } = await supabase
       .from('users')
-      .select('id, username, name, display_name, purse')
+      .select('id, username, purse')
       .eq('is_admin', false)
       .order('purse', { ascending: false });
     setUsersList(scoreData || []);
   };
 
-  const handlePlaceBet = async (matchId, kickoffTime) => {
+  const handlePlaceBet = async (matchId, outcome, kickoffTime) => {
     const matchKickoff = new Date(kickoffTime);
     if (new Date() >= matchKickoff) {
-      alert('🔒 Too late! The match has started and predictions are locked.');
+      alert('🔒 Kickoff reached! The window for this prediction is locked.');
       return;
     }
 
-    const prediction = predictions[matchId];
-    const amountInput = parseInt(betAmounts[matchId]);
+    const inputKey = `${matchId}_${outcome}`;
+    const amountInput = parseInt(betAmounts[inputKey]);
 
-    if (!prediction) return alert('Select an outcome!');
-    if (isNaN(amountInput) || amountInput < 1) return alert('Minimum bet is $1.');
+    if (isNaN(amountInput) || amountInput < 0) {
+      return alert('Please enter a valid stake amount ($1 minimum or 0 to clear).');
+    }
 
-    const existingBet = allBets.find(b => b.match_id === matchId && b.user_id === user.id);
+    // Locate if there's already a locked stake for this specific match outcome
+    const existingBet = allBets.find(b => b.match_id === matchId && b.predicted_outcome === outcome);
     const currentBetAmount = existingBet ? existingBet.amount : 0;
+    
+    // Calculate available wallet space safely
     const refundedPurse = parseFloat(user.purse || 0) + currentBetAmount;
 
-    if (amountInput > refundedPurse) return alert('Insufficient purse balance!');
+    if (amountInput > refundedPurse) {
+      return alert('Insufficient purse balance for this stake!');
+    }
 
+    // Case A: User wants to drop/delete their bet by typing 0
+    if (amountInput === 0) {
+      if (!existingBet) return;
+      
+      const { error } = await supabase.from('bets').delete().eq('id', existingBet.id);
+      if (!error) {
+        await supabase.from('users').update({ purse: refundedPurse }).eq('id', user.id);
+        alert('🎯 Stake removed and refunded!');
+        fetchDashboardData(user.id);
+      }
+      return;
+    }
+
+    // Case B: Create or Update the specific outcome stake
     const newPurse = refundedPurse - amountInput;
+    
+    // Optimistic wallet update
     await supabase.from('users').update({ purse: newPurse }).eq('id', user.id);
 
     if (existingBet) {
       const { error } = await supabase
         .from('bets')
-        .update({ predicted_outcome: prediction, amount: amountInput })
+        .update({ amount: amountInput })
         .eq('id', existingBet.id);
 
       if (error) {
+        // Rollback on network slip
         await supabase.from('users').update({ purse: parseFloat(user.purse || 0) }).eq('id', user.id);
-        alert('Error updating your bet.');
+        alert('Error shifting your stake.');
       } else {
-        alert('🎯 Your bid has been updated successfully!');
+        alert('🎯 Stake updated successfully!');
         fetchDashboardData(user.id);
       }
     } else {
-      const { error } = await supabase.from('bets').insert([{ user_id: user.id, match_id: matchId, predicted_outcome: prediction, amount: amountInput }]);
+      const { error } = await supabase
+        .from('bets')
+        .insert([{ user_id: user.id, match_id: matchId, predicted_outcome: outcome, amount: amountInput }]);
 
       if (error) {
+        // Rollback
         await supabase.from('users').update({ purse: parseFloat(user.purse || 0) }).eq('id', user.id);
-        alert('Bet saving error.');
+        alert('Error saving prediction.');
       } else {
-        alert('🎯 Bet locked in!');
+        alert('🎯 Prediction locked in!');
         fetchDashboardData(user.id);
       }
-    }
-  };
-
-  // 💸 VIRTUAL PEER-TO-PEER TRANSFER LOGIC
-  const handleVirtualTransfer = async (e) => {
-    e.preventDefault();
-    const amount = parseFloat(transferAmount);
-
-    if (!transferTarget) return alert('Please select a friend to send points to.');
-    if (isNaN(amount) || amount <= 0) return alert('Please enter a valid amount greater than 0.');
-    if (amount > parseFloat(user.purse || 0)) return alert('Insufficient purse balance for this transfer!');
-    if (transferTarget.toString() === user.id.toString()) return alert('You cannot send points to yourself.');
-
-    const targetUser = usersList.find(u => u.id.toString() === transferTarget.toString());
-    const recipientName = targetUser ? (targetUser.username || targetUser.name || targetUser.display_name || 'your friend') : 'your friend';
-    
-    if (!confirm(`Are you sure you want to transfer $${amount.toFixed(2)} to ${recipientName}?`)) return;
-
-    try {
-      const { data: recipient, error: fetchErr } = await supabase.from('users').select('purse, username').eq('id', transferTarget).single();
-      if (fetchErr || !recipient) throw new Error('Recipient not found');
-
-      const senderNewPurse = parseFloat(user.purse || 0) - amount;
-      await supabase.from('users').update({ purse: senderNewPurse }).eq('id', user.id);
-
-      const recipientNewPurse = parseFloat(recipient.purse || 0) + amount;
-      await supabase.from('users').update({ purse: recipientNewPurse }).eq('id', transferTarget);
-
-      alert(`✅ Successfully transferred $${amount.toFixed(2)} to ${recipient.username || 'recipient'}!`);
-      setTransferAmount('');
-      setTransferTarget('');
-      fetchDashboardData(user.id);
-    } catch (err) {
-      alert('Transfer failed. Please try again.');
     }
   };
 
@@ -147,15 +141,13 @@ export default function Dashboard() {
   };
 
   const handleDeleteAccount = async () => {
-    const confirmFirst = confirm("⚠️ WARNING: This will permanently delete your account and all points. Proceed?");
-    if (!confirmFirst) return;
-    const confirmFinal = confirm("Are you absolutely sure?");
-    if (!confirmFinal) return;
+    if (!confirm("⚠️ Proceeding will permanently purge your tournament profile. Continuous?")) return;
+    if (!confirm("Are you entirely sure? This cannot be undone.")) return;
 
     try {
       await supabase.from('bets').delete().eq('user_id', user.id);
       await supabase.from('users').delete().eq('id', user.id);
-      alert("👋 Account deleted.");
+      alert("Account removed.");
       localStorage.removeItem('app_user');
       window.location.href = '/';
     } catch (err) {
@@ -168,267 +160,224 @@ export default function Dashboard() {
     window.location.href = '/';
   };
 
-  if (!user) return <div style={{ color: '#fff', backgroundColor: '#0f172a', minHeight: '100vh', padding: '20px' }}>Loading...</div>;
+  if (!user) return <div style={{ color: '#fff', backgroundColor: '#022c22', minHeight: '100vh', padding: '20px' }}>Syncing Arena Portal...</div>;
 
   const activeMatches = matches.filter(m => !m.winner);
   const settledMatches = matches.filter(m => m.winner);
-  
-  // Exclude current logged-in user from the peer transfer selection box
-  const transferPartners = usersList.filter(u => u.id !== user.id);
 
   return (
     <div style={{ backgroundColor: '#0f172a', minHeight: '100vh', fontFamily: 'system-ui, sans-serif', color: '#f8fafc', padding: '12px' }}>
       <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
         
-        {/* HEADER BLOCK */}
-        <div style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        {/* TOP CODESPORTS MARQUEE HEADER */}
+        <div style={{ background: 'linear-gradient(135deg, #064e3b 0%, #022c22 100%)', border: '1px solid #10b981', borderRadius: '16px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px', boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', flexWrap: 'wrap', gap: '10px' }}>
             <div>
-              <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700' }}>👋 Welcome, {user.username || user.name || 'User'}</h2>
-              <div style={{ display: 'inline-block', backgroundColor: '#0284c7', color: '#fff', padding: '4px 10px', borderRadius: '20px', fontSize: '13px', fontWeight: '700', marginTop: '4px' }}>
-                💰 Purse: ${parseFloat(user.purse || 0).toFixed(2)}
-              </div>
+              <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '800', color: '#10b981', letterSpacing: '-0.025em' }}>⚽ FIFA 2026 PREDICTOR</h2>
+              <div style={{ color: '#94a3b8', fontSize: '13px', marginTop: '2px' }}>Welcome back, <strong style={{ color: '#fff' }}>{user.username}</strong></div>
             </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button onClick={() => setShowSettings(!showSettings)} style={{ backgroundColor: '#475569', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>
-                {showSettings ? 'Close Menu' : '⚙️ Settings'}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{ backgroundColor: '#0f172a', border: '1px solid #334155', color: '#34d399', padding: '8px 14px', borderRadius: '12px', fontSize: '15px', fontWeight: '800' }}>
+                🪙 Wallet Balance: ${parseFloat(user.purse || 0).toFixed(2)}
+              </div>
+              <button onClick={() => setShowSettings(!showSettings)} style={{ backgroundColor: '#334155', border: 'none', color: '#fff', padding: '8px 14px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>
+                {showSettings ? 'Close Panel' : '⚙️ Account'}
               </button>
-              <button onClick={handleLogout} style={{ backgroundColor: 'transparent', border: '1px solid #475569', color: '#94a3b8', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>Logout</button>
+              <button onClick={handleLogout} style={{ backgroundColor: 'transparent', border: '1px solid #ef4444', color: '#ef4444', padding: '8px 14px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>Logout</button>
             </div>
           </div>
-          <div style={{ fontSize: '12px', color: '#64748b', fontFamily: 'monospace', backgroundColor: '#0f172a', padding: '6px', borderRadius: '6px', border: '1px solid #334155', textAlign: 'center' }}>
-            ⏰ Clock: {currentTime.toLocaleTimeString('en-IN')}
+          <div style={{ fontSize: '12px', color: '#a7f3d0', fontFamily: 'monospace', backgroundColor: 'rgba(0, 0, 0, 0.2)', padding: '6px', borderRadius: '6px', textAlign: 'center', border: '1px solid rgba(16, 185, 129, 0.2)' }}>
+            ⏰ Clock: {currentTime.toLocaleTimeString('en-IN')} (IST)
           </div>
         </div>
 
-        {/* UTILITY CONTROL PANELS (SETTINGS & TRANSFERS) */}
+        {/* SECURITY SETTINGS EXPANSION */}
         {showSettings && (
-          <div style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            
-            {/* VIRTUAL TRANSACTIONS SYSTEM */}
+          <div style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div>
-              <h3 style={{ margin: '0 0 4px 0', fontSize: '16px', color: '#38bdf8' }}>💸 Transfer Points to Friend</h3>
-              <p style={{ margin: '0 0 10px 0', fontSize: '12px', color: '#94a3b8' }}>Send virtual tokens from your wallet directly to another player.</p>
-              <form onSubmit={handleVirtualTransfer} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <select value={transferTarget} onChange={(e) => setTransferTarget(e.target.value)} style={{ padding: '10px', backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: '#fff', fontSize: '14px', width: '100%' }}>
-                  <option value="">-- Select Recipient --</option>
-                  {transferPartners.map(u => (
-                    <option key={u.id} value={u.id}>
-                      👤 {u.username || u.name || u.display_name || 'Player'}
-                    </option>
-                  ))}
-                </select>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <input type="number" step="0.01" min="0.01" placeholder="Amount to send ($)" value={transferAmount} onChange={(e) => setTransferAmount(e.target.value)} style={{ flex: 1, padding: '10px', backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: '#fff', fontSize: '14px' }} />
-                  <button type="submit" style={{ backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '8px', padding: '0 20px', fontWeight: '700', cursor: 'pointer', fontSize: '14px' }}>Send</button>
-                </div>
+              <h3 style={{ margin: '0 0 8px 0', fontSize: '15px', color: '#f8fafc' }}>🔑 Update Arena Password</h3>
+              <form onSubmit={handleChangePassword} style={{ display: 'flex', gap: '8px' }}>
+                <input type="password" placeholder="Enter new password token" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} style={{ flex: 1, padding: '10px', backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: '#fff', fontSize: '14px' }} />
+                <button type="submit" style={{ backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '8px', padding: '0 16px', fontWeight: '600', cursor: 'pointer', fontSize: '14px' }}>Save</button>
               </form>
             </div>
-
             <hr style={{ border: 'none', borderTop: '1px solid #334155', margin: '0' }} />
-
-            {/* SECURITY CREDENTIAL FORM */}
             <div>
-              <h3 style={{ margin: '0 0 4px 0', fontSize: '16px', color: '#f8fafc' }}>🔑 Change Password</h3>
-              <form onSubmit={handleChangePassword} style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-                <input type="password" placeholder="Enter new password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} style={{ flex: 1, padding: '10px', backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: '#fff', fontSize: '14px' }} />
-                <button type="submit" style={{ backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '8px', padding: '0 16px', fontWeight: '600', cursor: 'pointer', fontSize: '14px' }}>Save</button>
-              </form>
-            </div>
-            
-            <hr style={{ border: 'none', borderTop: '1px solid #334155', margin: '0' }} />
-
-            {/* DANGER DELETION PANEL */}
-            <div>
-              <h3 style={{ margin: '0 0 4px 0', fontSize: '16px', color: '#f87171' }}>🚨 Danger Zone</h3>
-              <button onClick={handleDeleteAccount} style={{ backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 16px', fontWeight: '700', cursor: 'pointer', fontSize: '13px', width: '100%' }}>
-                Delete My Account Permanently
+              <h3 style={{ margin: '0 0 4px 0', fontSize: '15px', color: '#f87171' }}>🚨 Danger Zone</h3>
+              <button onClick={handleDeleteAccount} style={{ backgroundColor: '#b91c1c', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 16px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}>
+                Permanently Forfeit & Delete Profile
               </button>
             </div>
           </div>
         )}
 
-        {/* RESPONSIVE LAYOUT COLUMNS */}
-        <div style={{ display: 'flex', flexDirection: 'column-reverse', gap: '20px' }}>
+        {/* MAIN DASHBOARD DISTRIBUTION */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '20px' }}>
           
-          {/* GROUP STANDINGS LIST */}
+          {/* LIVE MATCH PRODUCTION HUB */}
           <div style={{ width: '100%' }}>
-            <h3 style={{ fontSize: '16px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#38bdf8', marginBottom: '12px' }}>📊 Group Standings</h3>
-            <div style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '12px' }}>
-              {usersList.map((u, index) => (
-                <div key={index} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 6px', borderBottom: index === usersList.length - 1 ? 'none' : '1px solid #334155', fontWeight: user.id === u.id ? '700' : '400', backgroundColor: user.id === u.id ? 'rgba(56,189,248,0.05)' : 'transparent', borderRadius: '6px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px' }}>
-                    <span style={{ color: index === 0 ? '#fbbf24' : index === 1 ? '#94a3b8' : index === 2 ? '#b45309' : '#64748b', fontWeight: '800' }}>#{index + 1}</span>
-                    <span>{u.username || u.name || u.display_name || 'Player'}</span>
-                  </div>
-                  <span style={{ color: '#38bdf8', fontWeight: '700', fontSize: '14px' }}>${parseFloat(u.purse || 0).toFixed(2)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* ACTIVE GAME CARDS BLOCK */}
-          <div style={{ width: '100%' }}>
-            <h3 style={{ fontSize: '16px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#38bdf8', marginBottom: '12px' }}>⚡ Live Match Cards</h3>
+            <h3 style={{ fontSize: '14px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#10b981', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ width: '8px', height: '8px', backgroundColor: '#10b981', borderRadius: '50%', display: 'inline-block' }}></span>
+              Live Fixture Selection Cards
+            </h3>
             
             {activeMatches.length === 0 ? (
-              <p style={{ color: '#64748b', fontSize: '13px', backgroundColor: '#1e293b', padding: '16px', borderRadius: '12px', border: '1px dashed #334155' }}>No active fixtures right now.</p>
+              <p style={{ color: '#64748b', fontSize: '13px', backgroundColor: '#1e293b', padding: '24px', borderRadius: '12px', border: '1px dashed #334155', textAlign: 'center' }}>No matches configured right now. Waiting on Arena Director...</p>
             ) : (
               activeMatches.map(m => {
                 const matchKickoff = new Date(m.kickoff_time);
                 const isClosed = currentTime >= matchKickoff;
-                
-                const myBet = allBets.find(b => b.match_id === m.id && b.user_id === user.id);
-                const matchBets = allBets.filter(b => b.match_id === m.id);
-                
-                const selectedOutcome = predictions[m.id] || (myBet ? myBet.predicted_outcome : null);
-                const enteredStake = betAmounts[m.id] !== undefined ? parseFloat(betAmounts[m.id]) : (myBet ? myBet.amount : 0);
-                
-                let activeMultiplier = 0;
-                if (selectedOutcome === 'A') activeMultiplier = m.margin_a;
-                if (selectedOutcome === 'B') activeMultiplier = m.margin_b;
-                if (selectedOutcome === 'DRAW') activeMultiplier = m.margin_draw;
-
-                const potentialReturn = enteredStake * activeMultiplier;
-                const potentialProfit = potentialReturn - enteredStake;
 
                 return (
-                  <div key={m.id} style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '16px', marginBottom: '16px' }}>
+                  <div key={m.id} style={{ backgroundColor: '#1e293b', border: isClosed ? '1px solid #334155' : '1px solid #064e3b', borderRadius: '16px', padding: '20px', marginBottom: '16px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
                     
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', paddingBottom: '8px', borderBottom: '1px solid #334155' }}>
-                      <span style={{ fontSize: '11px', fontWeight: '700', color: '#94a3b8' }}>MATCH NO. {m.match_no}</span>
-                      <span style={{ fontSize: '10px', fontWeight: '800', padding: '3px 8px', borderRadius: '6px', color: '#fff', backgroundColor: isClosed ? '#b91c1c' : '#0284c7' }}>
-                        {isClosed ? '🔒 LOCKED' : '⏳ OPEN'}
+                    {/* CARD HEADER METADATA */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', paddingBottom: '10px', borderBottom: '1px solid #334155' }}>
+                      <span style={{ fontSize: '11px', fontWeight: '800', color: '#94a3b8', letterSpacing: '0.05em' }}>MATCH NO. {m.match_no}</span>
+                      <span style={{ fontSize: '10px', fontWeight: '900', padding: '4px 10px', borderRadius: '20px', color: '#fff', backgroundColor: isClosed ? '#ef4444' : '#10b981', letterSpacing: '0.02em' }}>
+                        {isClosed ? '🔒 LOCKED' : '⏳ DEADLINE RUNNING'}
                       </span>
                     </div>
 
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', margin: '14px 0' }}>
-                      <div style={{ fontSize: '18px', fontWeight: '800', textAlign: 'center' }}>{m.team_a}</div>
-                      <div style={{ backgroundColor: '#0f172a', color: '#64748b', fontSize: '11px', fontWeight: '700', width: '26px', height: '26px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #334155' }}>VS</div>
-                      <div style={{ fontSize: '18px', fontWeight: '800', textAlign: 'center' }}>{m.team_b}</div>
+                    {/* MATCHUP TITLE PLATFORM */}
+                    <div style={{ display: 'flex', justifyContent: 'space-around', alignItems: 'center', margin: '16px 0', gap: '10px' }}>
+                      <div style={{ fontSize: '20px', fontWeight: '900', textAlign: 'center', flex: 1 }}>{m.team_a}</div>
+                      <div style={{ backgroundColor: '#0f172a', color: '#10b981', fontSize: '11px', fontWeight: '900', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid #064e3b' }}>VS</div>
+                      <div style={{ fontSize: '20px', fontWeight: '900', textAlign: 'center', flex: 1 }}>{m.team_b}</div>
                     </div>
 
-                    <div style={{ fontSize: '12px', color: '#94a3b8', textAlign: 'center', marginBottom: '14px', backgroundColor: '#0f172a', padding: '6px', borderRadius: '8px' }}>
-                      📅 {matchKickoff.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' })} (IST)
+                    <div style={{ fontSize: '12px', color: '#94a3b8', textAlign: 'center', marginBottom: '18px', backgroundColor: '#0f172a', padding: '8px', borderRadius: '8px', border: '1px solid #27272a' }}>
+                      📅 Kickoff: {matchKickoff.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })} (IST)
                     </div>
 
-                    {!isClosed ? (
-                      <div style={{ backgroundColor: '#0f172a', padding: '12px', borderRadius: '12px', border: '1px solid #334155' }}>
+                    {/* OUTCOME OPTIONS ARRAY */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      {['A', 'DRAW', 'B'].map((outcome) => {
+                        const labelName = outcome === 'A' ? m.team_a : outcome === 'B' ? m.team_b : '🤝 Match Draw';
+                        const multiplier = outcome === 'A' ? m.margin_a : outcome === 'B' ? m.margin_b : m.margin_draw;
                         
-                        {myBet && (
-                          <div style={{ backgroundColor: 'rgba(56, 189, 248, 0.08)', color: '#38bdf8', fontSize: '12px', padding: '8px', borderRadius: '6px', marginBottom: '12px', textAlign: 'center', border: '1px dashed rgba(56, 189, 248, 0.2)' }}>
-                            📝 Live Bid: ${myBet.amount} on {myBet.predicted_outcome === 'DRAW' ? 'Draw' : myBet.predicted_outcome === 'A' ? 'Team A' : 'Team B'}
-                          </div>
-                        )}
+                        // Extract locked state for this individual specific bet outcome row
+                        const individualBet = allBets.find(b => b.match_id === m.id && b.predicted_outcome === outcome);
+                        const currentStake = individualBet ? individualBet.amount : 0;
 
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
-                          <label style={{ textAlign: 'center', backgroundColor: selectedOutcome === 'A' ? '#0284c7' : '#1e293b', border: '1px solid #334155', borderRadius: '8px', padding: '10px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: '600', fontSize: '13px' }}>
-                            <input type="radio" name={`outcome-${m.id}`} checked={selectedOutcome === 'A'} onChange={() => setPredictions({ ...predictions, [m.id]: 'A' })} style={{ display: 'none' }} />
-                            <span>🚩 {m.team_a}</span>
-                            <span style={{color:'#38bdf8'}}>{m.margin_a}x</span>
-                          </label>
+                        const inputKey = `${m.id}_${outcome}`;
+                        const liveInputVal = betAmounts[inputKey] !== undefined ? betAmounts[inputKey] : (individualBet ? individualBet.amount : '');
+                        
+                        const parseInput = parseFloat(liveInputVal || 0);
+                        const potentialReturn = parseInput * multiplier;
 
-                          <label style={{ textAlign: 'center', backgroundColor: selectedOutcome === 'DRAW' ? '#0284c7' : '#1e293b', border: '1px solid #334155', borderRadius: '8px', padding: '10px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: '600', fontSize: '13px' }}>
-                            <input type="radio" name={`outcome-${m.id}`} checked={selectedOutcome === 'DRAW'} onChange={() => setPredictions({ ...predictions, [m.id]: 'DRAW' })} style={{ display: 'none' }} />
-                            <span>🤝 Draw</span>
-                            <span style={{color:'#38bdf8'}}>{m.margin_draw}x</span>
-                          </label>
-
-                          <label style={{ textAlign: 'center', backgroundColor: selectedOutcome === 'B' ? '#0284c7' : '#1e293b', border: '1px solid #334155', borderRadius: '8px', padding: '10px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: '600', fontSize: '13px' }}>
-                            <input type="radio" name={`outcome-${m.id}`} checked={selectedOutcome === 'B'} onChange={() => setPredictions({ ...predictions, [m.id]: 'B' })} style={{ display: 'none' }} />
-                            <span>🏁 {m.team_b}</span>
-                            <span style={{color:'#38bdf8'}}>{m.margin_b}x</span>
-                          </label>
-                        </div>
-
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                          <input type="number" min="1" placeholder="Enter Bid Amount ($)" value={betAmounts[m.id] !== undefined ? betAmounts[m.id] : (myBet ? myBet.amount : '')} onChange={(e) => setBetAmounts({ ...betAmounts, [m.id]: e.target.value })} style={{ padding: '10px', backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px', color: '#fff', outline: 'none', fontSize: '14px', width: '100%', boxSizing: 'border-box' }} />
-                          
-                          {selectedOutcome && enteredStake > 0 && (
-                            <div style={{ backgroundColor: 'rgba(56, 189, 248, 0.05)', border: '1px solid rgba(56, 189, 248, 0.15)', padding: '10px', borderRadius: '8px', fontSize: '12px', color: '#e2e8f0', lineHeight: '1.5' }}>
-                              📈 Get <strong>${potentialReturn.toFixed(2)}</strong> (Profit: <strong style={{ color: '#4ade80' }}>${potentialProfit.toFixed(2)}</strong>)
+                        return (
+                          <div key={outcome} style={{ backgroundColor: '#0f172a', border: '1px solid #232735', padding: '14px', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ fontSize: '14px', fontWeight: '700' }}>{labelName}</span>
+                              <span style={{ color: '#10b981', fontWeight: '800', fontSize: '14px' }}>Payout: {multiplier}x</span>
                             </div>
-                          )}
 
-                          <button onClick={() => handlePlaceBet(m.id, m.kickoff_time)} style={{ padding: '12px', backgroundColor: '#38bdf8', color: '#0f172a', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '14px' }}>
-                            {myBet ? '🔄 Update Current Bid' : 'Place Bid'}
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div>
-                        {myBet ? (
-                          <div style={{ backgroundColor: 'rgba(2,132,199,0.15)', border: '1px solid rgba(2,132,199,0.3)', padding: '12px', borderRadius: '12px', textAlign: 'center', color: '#38bdf8', fontWeight: '600', fontSize: '13px' }}>
-                            🎯 Locked: <strong>${myBet.amount}</strong> on {myBet.predicted_outcome} 🔒
-                          </div>
-                        ) : (
-                          <div style={{ backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', padding: '12px', borderRadius: '12px', textAlign: 'center', color: '#f87171', fontWeight: '600', fontSize: '13px' }}>
-                            🛑 Window closed.
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* REVEAL GRID */}
-                    {isClosed && (
-                      <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px dashed #334155' }}>
-                        <div style={{ fontSize: '12px', fontWeight: '700', color: '#94a3b8', marginBottom: '6px' }}>👁️ Group Submissions:</div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                          {matchBets.map(b => {
-                            const lookup = usersList.find(ul => ul.id === b.user_id);
-                            const finalLabel = lookup ? (lookup.username || lookup.name || lookup.display_name || 'Player') : 'Player';
-                            return (
-                              <div key={b.id} style={{ backgroundColor: '#0f172a', border: '1px solid #334155', padding: '6px 10px', borderRadius: '8px', fontSize: '12px', display: 'flex', justifyContent: 'space-between' }}>
-                                <span>👤 <strong>{finalLabel}</strong></span>
-                                <span style={{color: '#38bdf8'}}>${b.amount} ({b.predicted_outcome})</span>
+                            {currentStake > 0 && (
+                              <div style={{ fontSize: '12px', color: '#34d399', backgroundColor: 'rgba(16,185,129,0.08)', padding: '6px 10px', borderRadius: '6px', border: '1px dashed rgba(16,185,129,0.3)' }}>
+                                🛡️ Locked Stake: <strong>${currentStake}</strong> (Potential Return: ${(currentStake * multiplier).toFixed(2)})
                               </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
+                            )}
+
+                            {!isClosed ? (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                  <input 
+                                    type="number" 
+                                    min="0" 
+                                    placeholder="Stake ($) [0 to clear]" 
+                                    value={liveInputVal} 
+                                    onChange={(e) => setBetAmounts({ ...betAmounts, [inputKey]: e.target.value })} 
+                                    style={{ flex: 1, padding: '10px', backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px', color: '#fff', fontSize: '14px', outline: 'none' }} 
+                                  />
+                                  <button 
+                                    onClick={() => handlePlaceBet(m.id, outcome, m.kickoff_time)} 
+                                    style={{ padding: '0 16px', backgroundColor: '#10b981', color: '#022c22', border: 'none', borderRadius: '8px', fontWeight: '800', cursor: 'pointer', fontSize: '13px' }}
+                                  >
+                                    Lock
+                                  </button>
+                                </div>
+                                {parseInput > 0 && (
+                                  <div style={{ fontSize: '11px', color: '#94a3b8', paddingLeft: '4px' }}>
+                                    📈 Returns if hit: <strong style={{ color: '#34d399' }}>${potentialReturn.toFixed(2)}</strong> (Net Profit: ${(potentialReturn - parseInput).toFixed(2)})
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div style={{ fontSize: '12px', color: '#64748b', fontStyle: 'italic', padding: '4px 0' }}>
+                                {currentStake > 0 ? `🔒 Fixed At Kickoff` : '❌ No Position Taken'}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
 
                   </div>
                 );
               })
             )}
+          </div>
 
-            {/* MATCH HISTORY LOG */}
-            <h3 style={{ fontSize: '16px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#94a3b8', marginTop: '30px', marginBottom: '12px' }}>📜 Match History</h3>
+          {/* PERSISTENT LEADERBOARD PLATFORM */}
+          <div style={{ width: '100%' }}>
+            <h3 style={{ fontSize: '14px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#10b981', marginBottom: '12px' }}>📊 Standing Leaderboard</h3>
+            <div style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
+              {usersList.map((u, index) => {
+                const isMe = user.id === u.id;
+                return (
+                  <div key={u.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 10px', borderBottom: index === usersList.length - 1 ? 'none' : '1px solid #334155', fontWeight: isMe ? '800' : '400', backgroundColor: isMe ? 'rgba(16,185,129,0.06)' : 'transparent', borderRadius: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '14px' }}>
+                      <span style={{ color: index === 0 ? '#fbbf24' : index === 1 ? '#94a3b8' : index === 2 ? '#b45309' : '#64748b', fontWeight: '900' }}>#{index + 1}</span>
+                      <span>{u.username} {isMe && <span style={{ fontSize: '11px', color: '#10b981', verticalAlign: 'middle' }}>(You)</span>}</span>
+                    </div>
+                    <span style={{ color: '#10b981', fontWeight: '800', fontSize: '14px' }}>${parseFloat(u.purse || 0).toFixed(2)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* HISTORICAL RESOLUTIONS TRACK */}
+          <div style={{ width: '100%', marginTop: '14px' }}>
+            <h3 style={{ fontSize: '14px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b', marginBottom: '12px' }}>📜 Tournament History</h3>
             {settledMatches.length === 0 ? (
-              <p style={{ color: '#64748b', fontSize: '13px' }}>No matches settled yet.</p>
+              <p style={{ color: '#64748b', fontSize: '13px', fontStyle: 'italic' }}>No settled history records found on server.</p>
             ) : (
               settledMatches.map(m => {
-                const userBet = allBets.find(b => b.match_id === m.id && b.user_id === user.id);
-                const didWin = userBet && userBet.predicted_outcome === m.winner;
-                let payoutMultiplier = 1;
-                if (m.winner === 'A') payoutMultiplier = m.margin_a;
-                if (m.winner === 'B') payoutMultiplier = m.margin_b;
-                if (m.winner === 'DRAW') payoutMultiplier = m.margin_draw;
+                // Find all stakes this user placed on this old completed game
+                const historicalUserBets = allBets.filter(b => b.match_id === m.id);
 
                 return (
-                  <div key={m.id} style={{ backgroundColor: '#1e293b', opacity: 0.85, border: '1px solid #334155', borderRadius: '12px', padding: '12px', marginBottom: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div key={m.id} style={{ backgroundColor: '#1e293b', opacity: 0.9, border: '1px solid #334155', borderRadius: '12px', padding: '14px', marginBottom: '12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                       <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '700' }}>MATCH #{m.match_no}</span>
-                      <span style={{ fontSize: '12px', fontWeight: '700', color: '#38bdf8' }}>Result: {m.winner}</span>
+                      <span style={{ fontSize: '12px', fontWeight: '900', color: '#34d399' }}>Winner Node: {m.winner}</span>
                     </div>
-                    <div style={{ fontSize: '14px', fontWeight: '700' }}>{m.team_a} vs {m.team_b}</div>
+                    <div style={{ fontSize: '15px', fontWeight: '800', marginBottom: '8px' }}>{m.team_a} vs {m.team_b}</div>
                     
-                    {userBet ? (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#0f172a', padding: '6px 10px', borderRadius: '6px', fontSize: '12px' }}>
-                        <span style={{ color: '#94a3b8' }}>Bid: ${userBet.amount}</span>
-                        <span style={{ fontWeight: '800', color: didWin ? '#4ade80' : '#f87171' }}>
-                          {didWin ? `+$${(userBet.amount * payoutMultiplier).toFixed(2)}` : `-$${userBet.amount}`}
-                        </span>
+                    {historicalUserBets.length > 0 ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', backgroundColor: '#0f172a', padding: '8px', borderRadius: '8px' }}>
+                        {historicalUserBets.map(b => {
+                          const didWin = b.predicted_outcome === m.winner;
+                          let mult = b.predicted_outcome === 'A' ? m.margin_a : b.predicted_outcome === 'B' ? m.margin_b : m.margin_draw;
+                          return (
+                            <div key={b.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                              <span style={{ color: '#94a3b8' }}>Staked on ({b.predicted_outcome}): ${b.amount}</span>
+                              <span style={{ fontWeight: '800', color: didWin ? '#4ade80' : '#f87171' }}>
+                                {didWin ? `+$${(b.amount * mult).toFixed(2)}` : `-$${b.amount}`}
+                              </span>
+                            </div>
+                          );
+                        })}
                       </div>
                     ) : (
-                      <div style={{ fontSize: '11px', color: '#64748b', fontStyle: 'italic' }}>No Bid Placed</div>
+                      <div style={{ fontSize: '12px', color: '#64748b', fontStyle: 'italic' }}>No stakes placed on this fixture.</div>
                     )}
                   </div>
                 );
               })
             )}
-
           </div>
 
         </div>
